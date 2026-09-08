@@ -256,32 +256,56 @@ def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setenv("LEDGER_ROOT", str(data))
     monkeypatch.chdir(tmp_path)
-    assert main(["init", "--currencies", "INR", "--directory", str(data)]) == 0
+    assert main(["init", str(data), "--currencies", "INR", "--no-remember"]) == 0
 
-    # init writes into data/ledger/, and that is what LEDGER_ROOT should find.
+    # The records go straight into the folder that was named, not a level down.
+    assert (data / "main.beancount").exists()
+    assert not (data / "ledger").exists()
     assert project_root() == data
     assert Paths(data).main.exists()
     assert main(["check"]) == 0
 
 
-def test_bare_data_folder_is_accepted(tmp_path, monkeypatch):
-    """A folder holding main.beancount directly works too, without a ledger/ level."""
+def test_ledger_subfolder_layout_still_works(tmp_path, monkeypatch):
+    """Running init with no folder keeps records in ./ledger, which must still load."""
     from ledger_tools.cli import main
     from ledger_tools.store import Paths
 
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    monkeypatch.setenv("LEDGER_ROOT", str(staging))
-    monkeypatch.chdir(tmp_path)
-    assert main(["init", "--currencies", "INR", "--directory", str(staging)]) == 0
-
-    flat = tmp_path / "flat"
-    flat.mkdir()
-    for name in ("main.beancount", "accounts.beancount", "dates.ics"):
-        (flat / name).write_bytes((staging / "ledger" / name).read_bytes())
-    monkeypatch.setenv("LEDGER_ROOT", str(flat))
-    assert Paths(flat).ledger_dir == flat
+    home = tmp_path / "project"
+    home.mkdir()
+    monkeypatch.chdir(home)
+    monkeypatch.setenv("LEDGER_ROOT", str(home))
+    assert main(["init", "--currencies", "INR"]) == 0
+    assert (home / "ledger" / "main.beancount").exists()
+    assert Paths(home).ledger_dir == home / "ledger"
     assert main(["check"]) == 0
+
+
+def test_init_remembers_where_the_records_went(tmp_path, monkeypatch):
+    """Naming a folder elsewhere leaves a .ledger-root pointer behind."""
+    from ledger_tools.cli import main
+    from ledger_tools.store import LOCATION_FILENAME, project_root
+
+    code = tmp_path / "code"
+    code.mkdir()
+    records = tmp_path / "elsewhere" / "ledger"
+    monkeypatch.chdir(code)
+    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    assert main(["init", str(records), "--currencies", "INR"]) == 0
+    assert (code / LOCATION_FILENAME).read_text().strip() == str(records)
+    assert project_root() == records
+
+
+def test_init_can_make_the_records_a_git_repository(tmp_path, monkeypatch):
+    from ledger_tools.cli import main
+    from ledger_tools.store import git_repo_for
+
+    records = tmp_path / "records"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    assert main(["init", str(records), "--currencies", "INR", "--git", "--no-remember"]) == 0
+    assert (records / ".git").exists()
+    assert git_repo_for(records) == records
 
 
 def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypatch):
@@ -291,10 +315,11 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
     from ledger_tools.cli import main
     from ledger_tools.store import Paths, git_repo_for
 
-    monkeypatch.setenv("LEDGER_ROOT", str(tmp_path))
+    records = tmp_path / "records"
+    monkeypatch.setenv("LEDGER_ROOT", str(records))
     monkeypatch.chdir(tmp_path)
-    assert main(["init", "--currencies", "INR", "--directory", str(tmp_path)]) == 0
-    paths = Paths(tmp_path)
+    assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
+    paths = Paths(records)
 
     def git(*args, cwd):
         subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
@@ -303,7 +328,7 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
         git("init", "-b", "main", cwd=folder)
         git("config", "user.email", "t@example.com", cwd=folder)
         git("config", "user.name", "Test", cwd=folder)
-    (tmp_path / ".gitignore").write_text("ledger/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("records/\n", encoding="utf-8")
     git("add", "-A", cwd=tmp_path)
     git("commit", "-m", "code", cwd=tmp_path)
     git("add", "-A", cwd=paths.ledger_dir)
@@ -335,7 +360,7 @@ def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
     code.mkdir()
 
     monkeypatch.setenv("LEDGER_ROOT", str(records))
-    assert main(["init", "--currencies", "INR", "--directory", str(records)]) == 0
+    assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
     monkeypatch.delenv("LEDGER_ROOT")
 
     (code / ".ledger-root").write_text(str(records), encoding="utf-8")

@@ -12,7 +12,7 @@ def ledger_root(tmp_path, monkeypatch):
     """An initialised ledger in a temp folder, with LEDGER_ROOT pointing at it."""
     monkeypatch.setenv("LEDGER_ROOT", str(tmp_path))
     monkeypatch.chdir(tmp_path)
-    assert main(["init", "--currencies", "INR,USD", "--directory", str(tmp_path)]) == 0
+    assert main(["init", str(tmp_path), "--currencies", "INR,USD", "--no-remember"]) == 0
     return tmp_path
 
 

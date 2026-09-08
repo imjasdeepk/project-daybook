@@ -11,7 +11,9 @@ from beancount import loader
 
 from . import capture, dates, events, interest, queries
 from .entities import Entity, add_alias, add_entity, load_entities, resolve
-from .store import LedgerError, Paths, cite, git_sync, load, paths, slugify
+from .store import (
+    LOCATION_FILENAME, LedgerError, Paths, cite, git_sync, load, paths, slugify,
+)
 
 
 def _out(payload: dict, as_json: bool) -> None:
@@ -79,37 +81,87 @@ include "accounts.beancount"
 
 
 def cmd_init(args) -> dict:
-    root = Path(args.directory).resolve() if args.directory else Path.cwd()
+    """Create a ledger. Name a folder and the records go straight into it."""
+    called_from = Path.cwd()
+    if args.folder:
+        root = Path(args.folder).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        records = root
+    else:
+        root = called_from
+        records = root / "ledger"
     p = Paths(root)
-    p.ledger_dir.mkdir(parents=True, exist_ok=True)
-    if p.main.exists() and not args.force:
-        raise LedgerError(f"{p.main} already exists. Pass --force only if you mean to replace it.")
+    records.mkdir(parents=True, exist_ok=True)
+    main_file = records / "main.beancount"
+    accounts_file = records / "accounts.beancount"
+    events_file = records / "dates.ics"
+    if main_file.exists() and not args.force:
+        raise LedgerError(f"{main_file} already exists. Pass --force only if you mean to replace it.")
     currencies = [c.strip().upper() for c in args.currencies.split(",") if c.strip()]
     if not currencies:
         raise LedgerError("Give at least one currency, for example --currencies INR,USD")
-    p.main.write_text(
+    main_file.write_text(
         MAIN_TEMPLATE.format(
             title=args.title,
             currencies="\n".join(f'option "operating_currency" "{c}"' for c in currencies),
         ),
         encoding="utf-8",
     )
-    if not p.accounts.exists() or args.force:
-        p.accounts.write_text(
+    if not accounts_file.exists() or args.force:
+        accounts_file.write_text(
             "; People, places and things. Each record is one `open` directive:\n"
             "; the aliases here are how Claude turns what you say into an account.\n",
             encoding="utf-8",
         )
-    if not p.events.exists() or args.force:
-        events.write_calendar(p.events, events.empty_calendar())
-    _, errors, _ = loader.load_file(str(p.main))
+    if not events_file.exists() or args.force:
+        events.write_calendar(events_file, events.empty_calendar())
+    _, errors, _ = loader.load_file(str(main_file))
     if errors:
         raise LedgerError("The new ledger does not parse: " + "; ".join(e.message for e in errors))
-    return {
-        "created": [str(x.relative_to(root)) for x in (p.main, p.accounts, p.events)],
+
+    result = {
+        "records_folder": str(records),
+        "created": [f.name for f in (main_file, accounts_file, events_file)],
         "currencies": currencies,
-        "next": "Record something with: ledger add --kind lend --who \"<name>\" --amount 100 --currency "
-                + currencies[0],
+    }
+
+    # Remember where the records are, so any session finds them without a shell
+    # variable. Only needed when they do not sit under the folder we were run from.
+    if args.remember and records != called_from and records.parent != called_from:
+        pointer = called_from / LOCATION_FILENAME
+        pointer.write_text(str(records) + "\n", encoding="utf-8")
+        result["remembered_in"] = str(pointer)
+
+    if args.git:
+        result["git"] = _init_records_repo(records)
+    else:
+        result["backup"] = (
+            "No git repository created. Put this folder in Google Drive, Dropbox or "
+            "iCloud to back it up, or re-run with --git to version it instead."
+        )
+    result["next"] = (
+        'Record something with: ledger add --kind lend --who "<name>" --amount 100 '
+        f"--currency {currencies[0]}"
+    )
+    return result
+
+
+def _init_records_repo(records: Path) -> dict:
+    """Make the records folder a git repository of its own, so its history stays
+    separate from any public code repository."""
+    import subprocess
+    if (records / ".git").exists():
+        return {"status": "already_a_repository"}
+    try:
+        for cmd in (["git", "init", "-b", "main"], ["git", "add", "-A"],
+                    ["git", "commit", "-m", "Start the ledger"]):
+            subprocess.run(cmd, cwd=records, check=True, capture_output=True, text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        return {"status": "failed", "detail": str(exc)[:200]}
+    return {
+        "status": "created",
+        "next": "Add a private remote: gh repo create <you>/my-ledger --private "
+                "--source . --remote origin --push",
     }
 
 
@@ -301,7 +353,13 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("init", help="create a new ledger in this folder")
     i.add_argument("--title", default="Personal Ledger")
     i.add_argument("--currencies", default="USD", help="comma separated, e.g. INR,USD")
-    i.add_argument("--directory", default="")
+    i.add_argument("folder", nargs="?", default="",
+                   help="where your records go, e.g. ~/Documents/ledger. "
+                        "Defaults to ./ledger")
+    i.add_argument("--git", action="store_true",
+                   help="also make that folder a git repository of its own")
+    i.add_argument("--no-remember", dest="remember", action="store_false",
+                   help="do not write a .ledger-root pointer here")
     i.add_argument("--force", action="store_true")
     i.set_defaults(func=cmd_init)
 

@@ -36,11 +36,12 @@ Works the same on macOS, Windows and Linux. The only prerequisites are
 git clone https://github.com/imjasdeepk/project-ledger.git
 cd project-ledger
 uv sync
-uv run ledger init --currencies INR,USD --title "My Ledger"
+uv run ledger init ~/Documents/ledger --currencies INR,USD --title "My Ledger"
 ```
 
-That creates your records in `ledger/`, which this repository deliberately does
-not track. See [Your records stay private](#your-records-stay-private) below.
+Name any folder you like. Your records are written straight into it, and the
+tool remembers where they are. Nothing you record is ever stored in this
+repository. See [Your records stay private](#your-records-stay-private).
 
 On Windows use PowerShell and the same commands. `uv` installs the right Python for
 you, so nothing depends on what is already on your machine.
@@ -107,49 +108,53 @@ running on your machine.
 **The tool is public. Your finances are not.** They are two separate git
 repositories, and this one ignores the other.
 
+This repository holds the tool. Your records live in a folder of your choosing,
+somewhere else entirely.
+
 ```
-project-ledger/          <- this repository, public: the tool and the skill
+project-ledger/          <- this repository: the tool and the skill
   ledger_tools/
   .claude/skills/ledger/
-  .ledger-root           <- one line: where your records live
+  .ledger-root           <- one line naming your folder; not published
 
-~/Documents/ledger/      <- a separate private repository: your records
+~/Documents/ledger/      <- your records, wherever you put them
   main.beancount
   accounts.beancount
   2026.beancount
   dates.ics
 ```
 
-Keeping records outside the code folder is the recommended setup: nothing you
-record can reach the public repository, because it is not inside it. A `ledger/`
-folder inside this repository is gitignored as a second line of defence.
+`ledger init <folder>` writes the path into `.ledger-root`, which is gitignored
+and personal to your machine. Every session reads it, including ones that never
+load your shell profile. `LEDGER_ROOT` in the environment does the same job and
+wins when both are set. To move your records later, move the folder and update
+that one file.
 
-**Telling the tool where your records are.** Put the path in a `.ledger-root`
-file at the top of this repository:
+### Backing them up is your choice
+
+**A synced folder.** Put your records folder inside Google Drive, Dropbox or
+iCloud and let it sync. Nothing else to do, and no git involved.
 
 ```bash
-echo "$HOME/Documents/ledger" > .ledger-root
+uv run ledger init ~/"Google Drive/My Drive/ledger" --currencies USD
 ```
 
-That file is gitignored and personal to your machine. It is preferred over the
-`LEDGER_ROOT` environment variable because every session finds it, including
-ones that do not load your shell profile. The environment variable still works
-and takes precedence when set.
-
-**Keeping an off-machine copy.** Make your records folder a private git
-repository of its own:
+**A private git repository.** Add `--git` and your records become a repository
+of their own. Each entry is then committed as you record it, giving you a dated
+history of every change.
 
 ```bash
+uv run ledger init ~/Documents/ledger --currencies USD --git
 cd ~/Documents/ledger
-git init && git add -A && git commit -m "Start the ledger"
-gh repo create <you>/my-ledger-data --private --source . --remote origin --push
+gh repo create <you>/my-ledger --private --source . --remote origin --push
 ```
 
-Then `uv run ledger sync` pulls and pushes them. Entries are committed there
-automatically as you record them, so the audit trail exists without being
-published. If you would rather not use GitHub, put the folder inside Google
-Drive, Dropbox or iCloud and let that sync it. The tool works the same either
-way, including with no remote at all.
+After that, `uv run ledger sync` pulls and pushes your records when you move
+between machines. Keep that repository **private**. This one can be public
+without ever exposing it, because your records are not inside it.
+
+Both options work equally well, and you can start with one and move to the other
+by moving the folder.
 
 ## What the files are
 
