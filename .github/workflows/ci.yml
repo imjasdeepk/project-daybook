@@ -20,3 +20,36 @@ jobs:
         run: uv sync --extra dev
       - name: Run tests
         run: uv run pytest -q
+
+      - name: Check the shell installer parses
+        if: runner.os != 'Windows'
+        run: bash -n install.sh
+
+      - name: Check the PowerShell installer parses
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { $_.Message }; exit 1 }
+          Write-Host "install.ps1 parses cleanly"
+
+      - name: Install end to end from this checkout
+        if: runner.os != 'Windows'
+        env:
+          LEDGER_REPO: ${{ github.workspace }}
+          LEDGER_INSTALL_DIR: ${{ runner.temp }}/installed
+          LEDGER_DIR: ${{ runner.temp }}/records
+          LEDGER_CURRENCIES: INR,USD
+          LEDGER_BACKUP: git
+          LEDGER_GLOBAL_SKILL: "no"
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          bash install.sh < /dev/null
+          cd "$LEDGER_INSTALL_DIR"
+          uv run ledger check
+          uv run ledger entity add --name "CI Person" --aliases ci --currency INR
+          uv run ledger add --kind lend --who ci --amount 100 --date 2026-01-01 --note "smoke"
+          uv run ledger balance ci

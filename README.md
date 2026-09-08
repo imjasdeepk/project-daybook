@@ -32,12 +32,51 @@ cites the file and line it came from.
 Works the same on macOS, Windows and Linux. The only prerequisites are
 [git](https://git-scm.com/downloads) and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
+One command. It asks where you want your records and how to back them up, then
+you are recording.
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh | bash
+```
+
+**Windows**
+
+```powershell
+irm https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.ps1 | iex
+```
+
+Piping a script from the internet into a shell deserves a look first, always.
+Download it, read it, then run it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh
+less install.sh && bash install.sh
+```
+
+The installer needs [git](https://git-scm.com/downloads) and offers to install
+[uv](https://docs.astral.sh/uv/), which brings its own Python. It is safe to run
+again later; an existing ledger is left alone.
+
+To skip the questions, answer them up front:
+
+```bash
+LEDGER_DIR=~/Documents/ledger LEDGER_CURRENCIES=INR,USD LEDGER_BACKUP=git \
+  bash install.sh
+```
+
+<details>
+<summary>Or install by hand</summary>
+
 ```bash
 git clone https://github.com/imjasdeepk/project-ledger.git
 cd project-ledger
 uv sync
 uv run ledger init ~/Documents/ledger --currencies INR,USD --title "My Ledger"
 ```
+
+</details>
 
 Name any folder you like. Your records are written straight into it, and the
 tool remembers where they are. Nothing you record is ever stored in this
