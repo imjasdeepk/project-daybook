@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 *.egg-info/
+
+# Points at wherever your records live. Personal to this machine.
+.ledger-root

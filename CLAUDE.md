@@ -33,7 +33,7 @@ before changing behaviour that affects what Claude says to the user.
 | `ledger_tools/events.py` | The iCalendar file for birthdays and reminders |
 | `ledger_tools/capture.py` | Writing entries, validating them, rolling back failures |
 | `ledger_tools/dates.py` | Turning phrases like "last tuesday" into exact dates |
-| `ledger/` | The user's records. **A separate private git repository, ignored here.** |
+| `ledger/` | Only if records are kept here. **Gitignored; normally they live outside this repo.** |
 | `tests/` | pytest, run on macOS, Windows and Linux in CI |
 
 ## Conventions that matter
@@ -56,10 +56,11 @@ before changing behaviour that affects what Claude says to the user.
   "best guess" fallback.
 - **Portability.** Use `pathlib`, never shell pipes or Unix-only tools. Tests must
   pass on Windows.
-- **Records never enter this repository.** `ledger/` is gitignored and holds its own
-  git repository. `store.git_repo_for` resolves commits to whichever repository
-  actually contains the files, so entries land in the private one. Never add anything
-  under `ledger/` to this repository, and never write example records there.
+- **Records never enter this repository.** They normally live outside it entirely,
+  found via a gitignored `.ledger-root` file or the `LEDGER_ROOT` variable.
+  `store.git_repo_for` resolves commits to whichever repository actually contains the
+  files, so entries land in the private one. Never add anything under `ledger/` to
+  this repository, and never write example records there.
 
 ## Testing
 

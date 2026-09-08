@@ -27,8 +27,36 @@ class LedgerError(Exception):
     """A problem the user needs to see verbatim, not a traceback."""
 
 
+LOCATION_FILENAME = ".ledger-root"
+
+
+def _validated(root: Path, source: str) -> Path:
+    """Accept a folder holding the ledger files, either directly or under ledger/."""
+    if (root / LEDGER_DIRNAME / MAIN_FILENAME).exists() or (root / MAIN_FILENAME).exists():
+        return root
+    raise LedgerError(
+        f"{source} points at {root}, but no {MAIN_FILENAME} was found there "
+        f"or in {root / LEDGER_DIRNAME}."
+    )
+
+
+def _from_location_file(start: Path) -> Path | None:
+    """A `.ledger-root` file naming where your records live.
+
+    This is how the tool finds records kept outside the code folder without
+    depending on an environment variable, which not every session inherits.
+    """
+    for candidate in [start, *start.parents]:
+        pointer = candidate / LOCATION_FILENAME
+        if pointer.exists():
+            raw = pointer.read_text(encoding="utf-8").strip()
+            if raw:
+                return _validated(Path(raw).expanduser().resolve(), str(pointer))
+    return None
+
+
 def project_root(start: Path | None = None) -> Path:
-    """Walk up from `start` until a directory containing ledger/main.beancount."""
+    """Find the records: LEDGER_ROOT, then a .ledger-root file, then this folder."""
     env = os.environ.get("LEDGER_ROOT")
     if env:
         root = Path(env).expanduser().resolve()
@@ -43,11 +71,15 @@ def project_root(start: Path | None = None) -> Path:
             f"or in {root / LEDGER_DIRNAME}."
         )
     here = (start or Path.cwd()).resolve()
+    pointed = _from_location_file(here)
+    if pointed is not None:
+        return pointed
     for candidate in [here, *here.parents]:
         if (candidate / LEDGER_DIRNAME / MAIN_FILENAME).exists():
             return candidate
     raise LedgerError(
-        "No ledger found. Run 'uv run ledger init' in the project folder first."
+        "No ledger found. Run 'uv run ledger init' to create one, or put the path to "
+        f"your records in a {LOCATION_FILENAME} file."
     )
 
 

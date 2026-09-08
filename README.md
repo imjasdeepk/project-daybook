@@ -111,30 +111,45 @@ repositories, and this one ignores the other.
 project-ledger/          <- this repository, public: the tool and the skill
   ledger_tools/
   .claude/skills/ledger/
-  ledger/                <- a separate private repository: your records
+  .ledger-root           <- one line: where your records live
+
+~/Documents/ledger/      <- a separate private repository: your records
+  main.beancount
+  accounts.beancount
+  2026.beancount
+  dates.ics
 ```
 
-`ledger/` is listed in `.gitignore` here, so nothing you record can reach the
-public repository even by accident. Entries are committed to the private
-repository instead, which keeps the audit trail without publishing it.
+Keeping records outside the code folder is the recommended setup: nothing you
+record can reach the public repository, because it is not inside it. A `ledger/`
+folder inside this repository is gitignored as a second line of defence.
 
-Give that private repository a home of its own:
+**Telling the tool where your records are.** Put the path in a `.ledger-root`
+file at the top of this repository:
 
 ```bash
-cd ledger
+echo "$HOME/Documents/ledger" > .ledger-root
+```
+
+That file is gitignored and personal to your machine. It is preferred over the
+`LEDGER_ROOT` environment variable because every session finds it, including
+ones that do not load your shell profile. The environment variable still works
+and takes precedence when set.
+
+**Keeping an off-machine copy.** Make your records folder a private git
+repository of its own:
+
+```bash
+cd ~/Documents/ledger
+git init && git add -A && git commit -m "Start the ledger"
 gh repo create <you>/my-ledger-data --private --source . --remote origin --push
 ```
 
-After that, `uv run ledger sync` pulls and pushes your records. Run it when you
-switch between machines. If you would rather not use GitHub, put the `ledger`
-folder inside Google Drive, Dropbox or iCloud and let that sync it. The tool does
-not care which, and works the same with no remote at all.
-
-To point the tool at records kept somewhere else entirely:
-
-```bash
-export LEDGER_ROOT=/path/to/my-ledger-data
-```
+Then `uv run ledger sync` pulls and pushes them. Entries are committed there
+automatically as you record them, so the audit trail exists without being
+published. If you would rather not use GitHub, put the folder inside Google
+Drive, Dropbox or iCloud and let that sync it. The tool works the same either
+way, including with no remote at all.
 
 ## What the files are
 

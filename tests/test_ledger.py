@@ -321,3 +321,36 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
 
     assert count(paths.ledger_dir) > 1, "the entry should be committed with the records"
     assert count(tmp_path) == 1, "the code repository must not receive record commits"
+
+
+def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
+    """A .ledger-root file lets the code folder and the records live apart,
+    without relying on an environment variable a session may not inherit."""
+    from ledger_tools.cli import main
+    from ledger_tools.store import project_root
+
+    records = tmp_path / "Documents" / "ledger"
+    records.mkdir(parents=True)
+    code = tmp_path / "code"
+    code.mkdir()
+
+    monkeypatch.setenv("LEDGER_ROOT", str(records))
+    assert main(["init", "--currencies", "INR", "--directory", str(records)]) == 0
+    monkeypatch.delenv("LEDGER_ROOT")
+
+    (code / ".ledger-root").write_text(str(records), encoding="utf-8")
+    monkeypatch.chdir(code)
+    assert project_root() == records.resolve()
+    assert main(["check"]) == 0
+
+
+def test_location_file_naming_a_missing_folder_says_so(tmp_path, monkeypatch):
+    from ledger_tools.store import LedgerError, project_root
+
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / ".ledger-root").write_text(str(tmp_path / "nowhere"), encoding="utf-8")
+    monkeypatch.chdir(code)
+    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    with pytest.raises(LedgerError, match="no main.beancount was found"):
+        project_root()
