@@ -1,0 +1,5 @@
+# Managed by the mdloop CLI. Local, per-machine state — never commit these.
+# manifest.json and config.json ARE committed, deliberately.
+credentials
+.lock
+endpoint-trust.json
