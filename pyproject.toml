@@ -1,0 +1,30 @@
+[project]
+name = "project-ledger"
+version = "0.1.0"
+description = "A personal ledger you talk to: loans, interest, purchases, birthdays. Answers are computed by Beancount, never guessed."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = { text = "MIT" }
+dependencies = [
+    "beancount>=3.0.0",
+    "beanquery>=0.1.0",
+    "fava>=1.27",
+    "icalendar>=6.0.0",
+    "recurring-ical-events>=3.0.0",
+]
+
+[project.scripts]
+ledger = "ledger_tools.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ledger_tools"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
