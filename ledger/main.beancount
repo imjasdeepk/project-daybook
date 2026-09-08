@@ -1,8 +1,0 @@
-; Personal ledger. Every figure in an answer is computed from this file.
-; Human-readable on purpose: any number can be checked by reading the lines it cites.
-option "title" "Personal Ledger"
-option "operating_currency" "INR"
-option "operating_currency" "USD"
-plugin "beancount.plugins.auto_accounts"
-
-include "accounts.beancount"

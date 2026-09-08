@@ -11,7 +11,7 @@ from beancount import loader
 
 from . import capture, dates, events, interest, queries
 from .entities import Entity, add_alias, add_entity, load_entities, resolve
-from .store import LedgerError, Paths, cite, load, paths, slugify
+from .store import LedgerError, Paths, cite, git_sync, load, paths, slugify
 
 
 def _out(payload: dict, as_json: bool) -> None:
@@ -249,6 +249,11 @@ def cmd_search(args) -> dict:
     return queries.search(entries, args.text, p.root, limit=args.limit)
 
 
+def cmd_sync(args) -> dict:
+    p = paths()
+    return git_sync(p.ledger_dir)
+
+
 def cmd_check(args) -> dict:
     p = paths()
     _, errors, _ = loader.load_file(str(p.main))
@@ -380,6 +385,9 @@ def build_parser() -> argparse.ArgumentParser:
     sr.add_argument("text")
     sr.add_argument("--limit", type=int, default=50)
     sr.set_defaults(func=cmd_search)
+
+    sy = sub.add_parser("sync", help="pull and push your records to their private remote")
+    sy.set_defaults(func=cmd_sync)
 
     c = sub.add_parser("check", help="validate the whole ledger")
     c.set_defaults(func=cmd_check)

@@ -39,6 +39,9 @@ uv sync
 uv run ledger init --currencies INR,USD --title "My Ledger"
 ```
 
+That creates your records in `ledger/`, which this repository deliberately does
+not track. See [Your records stay private](#your-records-stay-private) below.
+
 On Windows use PowerShell and the same commands. `uv` installs the right Python for
 you, so nothing depends on what is already on your machine.
 
@@ -80,6 +83,7 @@ uv run ledger projection dad --as-of 2027-09-01
 uv run ledger event add --summary "Dad's birthday" --date "14 March 1958"
 uv run ledger upcoming --days 365
 uv run ledger check
+uv run ledger sync
 ```
 
 Run `uv run ledger --help` for the full list. Add `--json` to any command for
@@ -98,6 +102,40 @@ Your dates live in `ledger/dates.ics`, a standard calendar file. Subscribe your 
 or desktop calendar to it and birthdays arrive as normal notifications, with nothing
 running on your machine.
 
+## Your records stay private
+
+**The tool is public. Your finances are not.** They are two separate git
+repositories, and this one ignores the other.
+
+```
+project-ledger/          <- this repository, public: the tool and the skill
+  ledger_tools/
+  .claude/skills/ledger/
+  ledger/                <- a separate private repository: your records
+```
+
+`ledger/` is listed in `.gitignore` here, so nothing you record can reach the
+public repository even by accident. Entries are committed to the private
+repository instead, which keeps the audit trail without publishing it.
+
+Give that private repository a home of its own:
+
+```bash
+cd ledger
+gh repo create <you>/my-ledger-data --private --source . --remote origin --push
+```
+
+After that, `uv run ledger sync` pulls and pushes your records. Run it when you
+switch between machines. If you would rather not use GitHub, put the `ledger`
+folder inside Google Drive, Dropbox or iCloud and let that sync it. The tool does
+not care which, and works the same with no remote at all.
+
+To point the tool at records kept somewhere else entirely:
+
+```bash
+export LEDGER_ROOT=/path/to/my-ledger-data
+```
+
 ## What the files are
 
 | Path | What it holds |
@@ -113,10 +151,13 @@ can see later what a number was based on.
 
 ## On your phone
 
-The ledger is text in a git repository, so it goes wherever the repository goes. Push
-it to a private repository and open it with Claude Code on the web from your phone —
-the skill, the commands and the guardrails travel with it. Subscribe your phone
-calendar to `dates.ics` for date reminders.
+The ledger is text in a git repository, so it goes wherever the repository goes. With
+your records in their own private repository, open both with Claude Code on the web
+from your phone and the skill, the commands and the guardrails travel with them. Run
+`ledger sync` before and after so your machines agree.
+
+Subscribe your phone calendar to `dates.ics` for birthday and anniversary
+notifications, which then arrive with nothing running anywhere.
 
 ## Development
 

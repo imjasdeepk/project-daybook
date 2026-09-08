@@ -242,3 +242,82 @@ def test_source_phrase_is_kept(paths, run):
 def test_ledger_stays_valid_after_writes(paths, run):
     _scenario(run)
     run("check")
+
+
+# ------------------------------------------------------ keeping records private
+
+def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
+    """Your records may sit in a private folder of their own, so the tool can be
+    published without publishing your finances."""
+    from ledger_tools.cli import main
+    from ledger_tools.store import Paths, project_root
+
+    data = tmp_path / "private-records"
+    data.mkdir()
+    monkeypatch.setenv("LEDGER_ROOT", str(data))
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--currencies", "INR", "--directory", str(data)]) == 0
+
+    # init writes into data/ledger/, and that is what LEDGER_ROOT should find.
+    assert project_root() == data
+    assert Paths(data).main.exists()
+    assert main(["check"]) == 0
+
+
+def test_bare_data_folder_is_accepted(tmp_path, monkeypatch):
+    """A folder holding main.beancount directly works too, without a ledger/ level."""
+    from ledger_tools.cli import main
+    from ledger_tools.store import Paths
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    monkeypatch.setenv("LEDGER_ROOT", str(staging))
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--currencies", "INR", "--directory", str(staging)]) == 0
+
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    for name in ("main.beancount", "accounts.beancount", "dates.ics"):
+        (flat / name).write_bytes((staging / "ledger" / name).read_bytes())
+    monkeypatch.setenv("LEDGER_ROOT", str(flat))
+    assert Paths(flat).ledger_dir == flat
+    assert main(["check"]) == 0
+
+
+def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypatch):
+    """A private records repo nested in a public code repo gets the commits."""
+    import subprocess
+
+    from ledger_tools.cli import main
+    from ledger_tools.store import Paths, git_repo_for
+
+    monkeypatch.setenv("LEDGER_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--currencies", "INR", "--directory", str(tmp_path)]) == 0
+    paths = Paths(tmp_path)
+
+    def git(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    for folder in (tmp_path, paths.ledger_dir):
+        git("init", "-b", "main", cwd=folder)
+        git("config", "user.email", "t@example.com", cwd=folder)
+        git("config", "user.name", "Test", cwd=folder)
+    (tmp_path / ".gitignore").write_text("ledger/\n", encoding="utf-8")
+    git("add", "-A", cwd=tmp_path)
+    git("commit", "-m", "code", cwd=tmp_path)
+    git("add", "-A", cwd=paths.ledger_dir)
+    git("commit", "-m", "records", cwd=paths.ledger_dir)
+
+    assert git_repo_for(paths.ledger_dir) == paths.ledger_dir
+    main(["entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR"])
+    main(["add", "--kind", "lend", "--who", "them", "--amount", "10", "--date", "2026-09-01",
+          "--note", "a loan"])
+
+    def count(folder):
+        out = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=folder,
+                             check=True, capture_output=True, text=True)
+        return int(out.stdout.strip())
+
+    assert count(paths.ledger_dir) > 1, "the entry should be committed with the records"
+    assert count(tmp_path) == 1, "the code repository must not receive record commits"

@@ -34,8 +34,13 @@ def project_root(start: Path | None = None) -> Path:
         root = Path(env).expanduser().resolve()
         if (root / LEDGER_DIRNAME / MAIN_FILENAME).exists():
             return root
+        # Also accept a folder that holds the ledger files directly, so your
+        # records can live in their own private repository.
+        if (root / MAIN_FILENAME).exists():
+            return root
         raise LedgerError(
-            f"LEDGER_ROOT is set to {root} but {LEDGER_DIRNAME}/{MAIN_FILENAME} is not there."
+            f"LEDGER_ROOT is set to {root} but no {MAIN_FILENAME} was found there "
+            f"or in {root / LEDGER_DIRNAME}."
         )
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
@@ -52,6 +57,10 @@ class Paths:
 
     @property
     def ledger_dir(self) -> Path:
+        """Where the ledger files live: usually root/ledger, or root itself when
+        your records are kept in their own private folder."""
+        if (self.root / MAIN_FILENAME).exists() and not (self.root / LEDGER_DIRNAME / MAIN_FILENAME).exists():
+            return self.root
         return self.root / LEDGER_DIRNAME
 
     @property
@@ -136,10 +145,22 @@ def append_block(path: Path, block: str) -> int:
     return start_line
 
 
+def git_repo_for(path: Path) -> Path | None:
+    """The nearest enclosing git repository, or None. Lets your private ledger
+    keep its own history separate from the public code repository."""
+    here = path.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
 def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
-    """Commit the given files. Returns the short hash, or None if git is unavailable."""
-    if not (root / ".git").exists():
+    """Commit the given files into whichever repository actually holds them."""
+    repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
+    if repo is None:
         return None
+    root = repo
     try:
         subprocess.run(
             ["git", "add", "--", *[str(f) for f in files]],
@@ -165,9 +186,11 @@ def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
 
 
 def revert_files(root: Path, files: list[Path]) -> None:
-    """Undo uncommitted changes to the given files (used when bean-check fails)."""
-    if not (root / ".git").exists():
+    """Undo uncommitted changes to the given files (used when validation fails)."""
+    repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
+    if repo is None:
         return
+    root = repo
     try:
         subprocess.run(
             ["git", "checkout", "--", *[str(f) for f in files]],
@@ -187,3 +210,29 @@ def opens(entries) -> list:
 
 def today() -> date:
     return date.today()
+
+
+def git_sync(path: Path) -> dict:
+    """Pull then push the repository holding your records, so the copy on your
+    phone and the copy on your laptop agree. Never touches the code repository."""
+    repo = git_repo_for(path)
+    if repo is None:
+        return {"status": "no_repository",
+                "detail": f"{path} is not in a git repository, so there is nothing to sync."}
+    try:
+        remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=repo,
+                                check=True, capture_output=True, text=True).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {"status": "no_remote", "repository": str(repo),
+                "detail": "No 'origin' remote. Add one to keep an off-machine copy."}
+    steps = []
+    for label, args in (("pull", ["pull", "--rebase", "--autostash"]), ("push", ["push"])):
+        result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+        steps.append({"step": label, "ok": result.returncode == 0,
+                      "output": (result.stderr or result.stdout).strip()[:400]})
+        if result.returncode != 0 and label == "pull":
+            return {"status": "conflict", "repository": str(repo), "remote": remote,
+                    "steps": steps,
+                    "detail": "Pull failed. Resolve it by hand before syncing again."}
+    return {"status": "synced" if all(s["ok"] for s in steps) else "failed",
+            "repository": str(repo), "remote": remote, "steps": steps}

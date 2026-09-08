@@ -1,3 +1,10 @@
+# Your actual records. These stay private and are versioned in their own
+# repository inside ledger/, so this repo can be published safely.
+ledger/
+
+# Local mdloop review state, specific to one machine.
+.mdloop/
+
 .venv/
 __pycache__/
 *.pyc

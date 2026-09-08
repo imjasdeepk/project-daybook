@@ -18,7 +18,7 @@ Portability rules: no Homebrew-only or Unix-only tools; all helper code is Pytho
 
 Assumption on interest (from your answer): balances come only from recorded transactions. The loan's rate and method are stored as account metadata and used only for a separately labelled projection that prints its formula.
 
-## Repository layout (`/Users/jasdeepkatariya/projects/project-ledger`, public git repo, MIT)
+## Repository layout (public git repo, MIT)
 
 ```
 LICENSE, README.md                 install (2 commands), conventions, example dialogue
