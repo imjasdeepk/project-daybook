@@ -18,8 +18,11 @@ the commands below, say so plainly instead of estimating.
 
 ## Commands
 
-Run everything with `uv run ledger ... --json` from the project folder. `--json` gives
-you structured output; drop it if you want to show the user something readable.
+Run everything with `ledger --json <command> ...`. The command works from any folder.
+If it is not on the path, run `uv run ledger --json <command> ...` from the project
+folder. **`--json` goes before the subcommand, not after it** — `ledger --json resolve
+"dad"`, never `ledger resolve "dad" --json`, which is a usage error. Drop `--json` when
+you want to show the user something readable.
 
 | Need | Command |
 |---|---|
