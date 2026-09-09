@@ -7,49 +7,64 @@ from decimal import Decimal
 import pytest
 
 from ledger_tools import interest, queries
+from ledger_tools.contracts import load_contracts
 from ledger_tools.entities import load_entities, resolve
 from ledger_tools.store import LedgerError, Paths, load
 
 
-def _entity(paths: Paths, name: str):
+def _add_me(run):
+    run("entity", "add", "--name", "Me", "--aliases", "me", "--currency", "INR",
+        "--book", "--self")
+
+
+def _load_all(paths: Paths):
     entries, _ = load(paths)
-    found = resolve(name, load_entities(entries, paths.root))
+    entities = load_entities(entries, paths.root)
+    contracts, problems = load_contracts(entries, entities, paths.root)
+    assert problems == [], problems
+    return entries, entities, contracts
+
+
+def _entity(paths: Paths, name: str):
+    entries, entities, contracts = _load_all(paths)
+    found = resolve(name, entities)
     assert found["status"] == "resolved", found
-    return entries, next(e for e in load_entities(entries, paths.root) if e.slug == found["entity"]["slug"])
+    entity = next(e for e in entities if e.slug == found["entity"]["slug"])
+    return entries, contracts, entity
 
 
 def _add_dad(run, **overrides):
-    args = {
-        "--name": "Harjit Singh", "--relation": "father", "--aliases": "dad, papa",
-        "--currency": "INR", "--rate": "8", "--method": "simple", "--opened": "2026-01-01",
-    }
-    args.update(overrides)
-    flat = [x for pair in args.items() for x in pair]
-    run("entity", "add", *flat)
+    """A book owner ('me'), a borrower ('dad'), and a contract between them."""
+    _add_me(run)
+    run("entity", "add", "--name", "Harjit Singh", "--relation", "father",
+        "--aliases", "dad, papa", "--currency", "INR")
+    terms = {"--rate": "8", "--method": "simple", "--started": "2026-01-01"}
+    terms.update(overrides)
+    flat = [x for pair in terms.items() for x in pair]
+    run("contract", "add", "--lender", "me", "--borrower", "dad", *flat)
 
 
 # ------------------------------------------------------------------ resolution
 
 def test_alias_resolves_to_one_person(paths, run):
     _add_dad(run)
-    entries, _ = load(paths)
-    entities = load_entities(entries, paths.root)
+    _, entities, _ = _load_all(paths)
     for alias in ("dad", "papa", "Harjit Singh", "HARJIT SINGH"):
         assert resolve(alias, entities)["status"] == "resolved", alias
 
 
 def test_near_miss_asks_instead_of_guessing(paths, run):
     _add_dad(run)
-    entries, _ = load(paths)
-    result = resolve("harjeet", load_entities(entries, paths.root))
+    _, entities, _ = _load_all(paths)
+    result = resolve("harjeet", entities)
     assert result["status"] == "ambiguous"
     assert result["candidates"][0]["name"] == "Harjit Singh"
 
 
 def test_unknown_name_is_unknown(paths, run):
     _add_dad(run)
-    entries, _ = load(paths)
-    assert resolve("Ravi", load_entities(entries, paths.root))["status"] == "unknown"
+    _, entities, _ = _load_all(paths)
+    assert resolve("Ravi", entities)["status"] == "unknown"
 
 
 def test_duplicate_alias_is_refused(paths, run):
@@ -60,8 +75,8 @@ def test_duplicate_alias_is_refused(paths, run):
 def test_alias_can_be_added_later(paths, run):
     _add_dad(run)
     run("entity", "alias", "Harjit Singh", "--add", "pitaji")
-    entries, _ = load(paths)
-    assert resolve("pitaji", load_entities(entries, paths.root))["status"] == "resolved"
+    _, entities, _ = _load_all(paths)
+    assert resolve("pitaji", entities)["status"] == "resolved"
 
 
 # --------------------------------------------------------------------- balances
@@ -82,45 +97,57 @@ def _scenario(run):
 
 def test_balance_counts_and_currencies(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    result = queries.balance(entries, dad, date(2026, 9, 30), paths.root)
-    assert result["owed_to_you"] == {"INR": "6000", "USD": "200"}
-    assert result["interest_received"] == {"INR": "100"}
+    entries, contracts, dad = _entity(paths, "dad")
+    result = queries.balance(entries, dad, contracts, date(2026, 9, 30), paths.root)
+    assert result["payable"] == {"INR": "6000", "USD": "200"}
+    assert result["interest_paid"] == {"INR": "100"}
     assert result["counts"] == {
-        "lent": 3, "repaid": 1, "borrowed": 0, "repaid_to_them": 0, "interest_received": 1,
+        "lent": 0, "repaid": 0, "borrowed": 3, "returned": 1,
+        "interest_received": 0, "interest_paid": 1,
     }
+
+
+def test_the_lender_sees_the_mirror_image(paths, run):
+    _scenario(run)
+    entries, contracts, me = _entity(paths, "me")
+    result = queries.balance(entries, me, contracts, date(2026, 9, 30), paths.root)
+    assert result["receivable"] == {"INR": "6000", "USD": "200"}
+    assert result["interest_received"] == {"INR": "100"}
+    assert result["counts"]["lent"] == 3
+    assert result["counts"]["repaid"] == 1
 
 
 def test_currencies_are_never_added_together(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    owed = queries.balance(entries, dad, None, paths.root)["owed_to_you"]
+    entries, contracts, dad = _entity(paths, "dad")
+    owed = queries.balance(entries, dad, contracts, None, paths.root)["payable"]
     assert set(owed) == {"INR", "USD"}
     assert Decimal(owed["INR"]) == 6000 and Decimal(owed["USD"]) == 200
 
 
 def test_balance_respects_as_of_date(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    early = queries.balance(entries, dad, date(2026, 9, 2), paths.root)
-    assert early["owed_to_you"] == {"INR": "5000"}
-    assert early["counts"]["lent"] == 1
+    entries, contracts, dad = _entity(paths, "dad")
+    early = queries.balance(entries, dad, contracts, date(2026, 9, 2), paths.root)
+    assert early["payable"] == {"INR": "5000"}
+    assert early["counts"]["borrowed"] == 1
 
 
 def test_every_row_cites_a_line(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    rows = queries.statement(entries, dad, None, paths.root)["rows"]
+    entries, contracts, dad = _entity(paths, "dad")
+    rows = queries.statement(entries, dad, contracts, None, paths.root)["rows"]
     assert rows and all(":" in r["citation"] and r["citation"].split(":")[-1].isdigit() for r in rows)
 
 
 def test_statement_running_balance(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    statement = queries.statement(entries, dad, None, paths.root)
-    inr = [r["balance_owed_to_you"] for r in statement["rows"] if r["currency"] == "INR" and r["role"] == "loans"]
+    entries, contracts, dad = _entity(paths, "dad")
+    statement = queries.statement(entries, dad, contracts, None, paths.root)
+    inr = [r["balance_on_contract"] for r in statement["rows"]
+          if r["currency"] == "INR" and r["role"] == "borrower"]
     assert inr == ["5000", "8000", "6000"]
-    assert statement["final_balance_owed_to_you"] == {"INR": "6000", "USD": "200"}
+    assert statement["final_net"] == {"INR": "-6000", "USD": "-200"}
 
 
 # ------------------------------------------------------------------- duplicates
@@ -133,13 +160,13 @@ def test_duplicate_is_refused_then_allowed_with_force(paths, run, capsys):
     run("--json", "add", "--kind", "lend", "--who", "dad", "--amount", "3000",
         "--date", "2026-09-03", "--note", "school fees again", "--no-commit")
     assert "possible_duplicate" in capsys.readouterr().out
-    entries, dad = _entity(paths, "dad")
-    assert queries.balance(entries, dad, None, paths.root)["counts"]["lent"] == 1
+    entries, contracts, dad = _entity(paths, "dad")
+    assert queries.balance(entries, dad, contracts, None, paths.root)["counts"]["borrowed"] == 1
 
     run("add", "--kind", "lend", "--who", "dad", "--amount", "3000", "--date", "2026-09-03",
         "--note", "genuinely separate", "--force", "--no-commit")
-    entries, dad = _entity(paths, "dad")
-    assert queries.balance(entries, dad, None, paths.root)["counts"]["lent"] == 2
+    entries, contracts, dad = _entity(paths, "dad")
+    assert queries.balance(entries, dad, contracts, None, paths.root)["counts"]["borrowed"] == 2
 
 
 def test_duplicate_window_does_not_reach_a_week_out(paths, run):
@@ -148,16 +175,16 @@ def test_duplicate_window_does_not_reach_a_week_out(paths, run):
         "--date", "2026-09-01", "--note", "one", "--no-commit")
     run("add", "--kind", "lend", "--who", "dad", "--amount", "3000",
         "--date", "2026-09-10", "--note", "two", "--no-commit")
-    entries, dad = _entity(paths, "dad")
-    assert queries.balance(entries, dad, None, paths.root)["counts"]["lent"] == 2
+    entries, contracts, dad = _entity(paths, "dad")
+    assert queries.balance(entries, dad, contracts, None, paths.root)["counts"]["borrowed"] == 2
 
 
 # -------------------------------------------------------------------- interest
 
 def test_simple_interest_matches_hand_calculation(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    result = interest.project(entries, dad, date(2027, 9, 1), paths.root)
+    entries, contracts, dad = _entity(paths, "dad")
+    result = interest.project(entries, dad, date(2027, 9, 1), paths.root, contracts=contracts)
     expected = sum(
         Decimal(p) * Decimal("0.08") * Decimal(d) / Decimal(365)
         for p, d in [("5000", 2), ("8000", 2), ("6000", 361)]
@@ -170,8 +197,8 @@ def test_compound_interest_matches_hand_calculation(paths, run):
     _add_dad(run, **{"--rate": "10", "--method": "compound", "--compounding": "annual"})
     run("add", "--kind", "lend", "--who", "dad", "--amount", "1000",
         "--date", "2026-01-01", "--note", "loan", "--no-commit")
-    entries, dad = _entity(paths, "dad")
-    result = interest.project(entries, dad, date(2027, 1, 1), paths.root)
+    entries, contracts, dad = _entity(paths, "dad")
+    result = interest.project(entries, dad, date(2027, 1, 1), paths.root, contracts=contracts)
     assert Decimal(result["by_currency"]["INR"]["projected_interest"]) == Decimal("100.00")
 
 
@@ -179,28 +206,27 @@ def test_monthly_compounding_beats_annual(paths, run):
     _add_dad(run, **{"--rate": "10", "--method": "compound", "--compounding": "monthly"})
     run("add", "--kind", "lend", "--who", "dad", "--amount", "1000",
         "--date", "2026-01-01", "--note", "loan", "--no-commit")
-    entries, dad = _entity(paths, "dad")
-    result = interest.project(entries, dad, date(2027, 1, 1), paths.root)
+    entries, contracts, dad = _entity(paths, "dad")
+    result = interest.project(entries, dad, date(2027, 1, 1), paths.root, contracts=contracts)
     assert Decimal(result["by_currency"]["INR"]["projected_interest"]) == Decimal("104.71")
 
 
 def test_projection_is_labelled_and_separate_from_owed(paths, run):
     _scenario(run)
-    entries, dad = _entity(paths, "dad")
-    projection = interest.project(entries, dad, date(2027, 9, 1), paths.root)
+    entries, contracts, dad = _entity(paths, "dad")
+    projection = interest.project(entries, dad, date(2027, 9, 1), paths.root, contracts=contracts)
     assert "not owed" in projection["PROJECTION"].lower()
     assert projection["by_currency"]["INR"]["formula"]
-    balance = queries.balance(entries, dad, date(2027, 9, 1), paths.root)
-    assert balance["owed_to_you"]["INR"] == "6000"  # projection never folded in
+    balance = queries.balance(entries, dad, contracts, date(2027, 9, 1), paths.root)
+    assert balance["payable"]["INR"] == "6000"  # projection never folded in
 
 
-def test_projection_without_a_rate_refuses(paths, run):
+def test_projection_without_a_matching_contract_refuses(paths, run):
+    _add_me(run)
     run("entity", "add", "--name", "Ravi Kumar", "--aliases", "ravi", "--currency", "INR")
-    run("add", "--kind", "lend", "--who", "ravi", "--amount", "500",
-        "--date", "2026-01-01", "--note", "loan", "--no-commit")
-    entries, ravi = _entity(paths, "ravi")
-    with pytest.raises(LedgerError, match="rate_percent_pa"):
-        interest.project(entries, ravi, date(2027, 1, 1), paths.root)
+    with pytest.raises(LedgerError, match="no matching loan contract"):
+        entries, contracts, ravi = _entity(paths, "ravi")
+        interest.project(entries, ravi, date(2027, 1, 1), paths.root, contracts=contracts)
 
 
 # ---------------------------------------------------------------- corrections
@@ -214,8 +240,8 @@ def test_void_reverses_without_editing_history(paths, run):
         "--amount", "5000", "--date", "2026-09-01", "--note", "typo", "--no-commit")
     after = (paths.ledger_dir / "2026.beancount").read_text(encoding="utf-8")
     assert before in after, "the original entry must still be there"
-    entries, dad = _entity(paths, "dad")
-    assert queries.balance(entries, dad, None, paths.root)["owed_to_you"] == {}
+    entries, contracts, dad = _entity(paths, "dad")
+    assert queries.balance(entries, dad, contracts, None, paths.root)["payable"] == {}
 
 
 # -------------------------------------------------------------------- capture
@@ -227,7 +253,15 @@ def test_bad_amount_is_refused(paths, run):
 
 
 def test_unknown_person_is_refused_not_invented(paths, run):
+    _add_me(run)
     run("add", "--kind", "lend", "--who", "nobody", "--amount", "10",
+        "--currency", "INR", "--no-commit", expect=1)
+
+
+def test_no_contract_is_refused_not_invented(paths, run):
+    _add_me(run)
+    run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
+    run("add", "--kind", "lend", "--who", "them", "--amount", "10",
         "--currency", "INR", "--no-commit", expect=1)
 
 
@@ -335,7 +369,11 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
     git("commit", "-m", "records", cwd=paths.ledger_dir)
 
     assert git_repo_for(paths.ledger_dir) == paths.ledger_dir
+    main(["entity", "add", "--name", "Me", "--aliases", "me", "--currency", "INR",
+          "--book", "--self"])
     main(["entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR"])
+    main(["contract", "add", "--lender", "me", "--borrower", "them", "--rate", "0",
+          "--started", "2026-09-01"])
     main(["add", "--kind", "lend", "--who", "them", "--amount", "10", "--date", "2026-09-01",
           "--note", "a loan"])
 

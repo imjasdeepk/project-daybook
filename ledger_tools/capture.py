@@ -3,6 +3,13 @@
 Every write is validated by Beancount before it is kept. A write that does not
 parse is rolled back rather than left behind, and nothing is ever edited in
 place: a correction is a new, reversing entry.
+
+Direction (who is the lender, who is the borrower) lives on the contract, not
+on the entry kind, so `principal` and `repayment` cover both directions --
+lending out and borrowing are both "principal moving under a contract", just
+mirrored. The old `lend`/`repay`/`borrow`/`repay-them` names still work and
+now double as an assertion: if the name's direction disagrees with the
+contract's, the entry is refused rather than silently reinterpreted.
 """
 from __future__ import annotations
 
@@ -12,6 +19,7 @@ from pathlib import Path
 
 from beancount import loader
 
+from .contracts import Contract
 from .entities import Entity
 from .queries import find_duplicates
 from .store import (
@@ -19,16 +27,23 @@ from .store import (
     git_commit, revert_files,
 )
 
-# kind -> (debit account template, credit account template, human description)
 KINDS = {
-    "lend":       ("loans", "cash",     "Money you handed over that is owed back"),
-    "repay":      ("cash",  "loans",    "Principal coming back to you"),
-    "interest":   ("cash",  "interest", "Interest you actually received"),
-    "borrow":     ("cash",  "owed",     "Money you took that you owe back"),
-    "repay-them": ("owed",  "cash",     "Principal you paid back"),
-    "spend":      ("expense", "cash",   "Money spent"),
-    "receive":    ("cash",  "income",   "Money received that is not a loan"),
+    "principal": "Money moving under a contract: lent out, or taken on",
+    "repayment": "Principal moving back the other way",
+    "interest":  "Interest actually paid or received. Never interest that merely accrued.",
+    "spend":     "Money spent",
+    "receive":   "Money received that is not a loan",
 }
+
+# old name -> (new kind, the direction it asserts: which side the book owner is on)
+LEGACY_KINDS = {
+    "lend":       ("principal", "receivable"),
+    "repay":      ("repayment", "receivable"),
+    "borrow":     ("principal", "payable"),
+    "repay-them": ("repayment", "payable"),
+}
+
+ALL_KINDS = sorted({*KINDS, *LEGACY_KINDS})
 
 
 def parse_amount(raw: str) -> Decimal:
@@ -41,33 +56,62 @@ def parse_amount(raw: str) -> Decimal:
     return value
 
 
-def _account_for(role: str, entity: Entity | None, currency: str, category: str) -> str:
-    if role == "cash":
-        return f"{CASH_ROOT}:{currency}"
-    if role == "expense":
-        return f"Expenses:{category or 'Uncategorised'}"
-    if role == "income":
-        return f"Income:{category or 'Other'}"
-    if entity is None:
-        raise LedgerError(f"A {role} entry needs a person or organisation.")
-    return {"loans": entity.loans_account, "owed": entity.owed_account,
-            "interest": entity.interest_account}[role]
+def _accounts_for(kind: str, contract: Contract | None, owner: Entity | None,
+                  currency: str, category: str) -> tuple[str, str, str]:
+    """Returns (debit_account, credit_account, primary_account)."""
+    if kind in ("spend", "receive"):
+        if owner is None:
+            raise LedgerError(f"A {kind} entry needs an owner's book. Pass --book.")
+        cash = f"{CASH_ROOT}:{owner.slug}:{currency}"
+        if kind == "spend":
+            return f"Expenses:{category or 'Uncategorised'}", cash, cash
+        return cash, f"Income:{category or 'Other'}", cash
+
+    if contract is None:
+        raise LedgerError(f"A {kind} entry needs a contract. Pass --contract, or --lender "
+                          "and --borrower if the pair has exactly one.")
+    cash = contract.cash_account(currency)
+    receivable = contract.direction == "receivable"
+    if kind == "principal":
+        return (contract.account, cash, contract.account) if receivable \
+            else (cash, contract.account, contract.account)
+    if kind == "repayment":
+        return (cash, contract.account, contract.account) if receivable \
+            else (contract.account, cash, contract.account)
+    if kind == "interest":
+        return (cash, contract.interest_account, contract.account) if receivable \
+            else (contract.interest_account, cash, contract.account)
+    raise LedgerError(f"Unknown kind {kind!r}. Use one of: {', '.join(KINDS)}.")
 
 
-def plan_entry(kind: str, *, entity: Entity | None, amount: Decimal, currency: str,
-               when: date, narration: str, source: str, category: str = "") -> dict:
+def plan_entry(kind: str, *, contract: Contract | None = None, owner: Entity | None = None,
+              counterparty: Entity | None = None, amount: Decimal, currency: str,
+              when: date, narration: str, source: str, category: str = "") -> dict:
     """Work out the two postings without writing anything."""
-    if kind not in KINDS:
-        raise LedgerError(f"Unknown kind {kind!r}. Use one of: {', '.join(KINDS)}.")
-    debit_role, credit_role, _ = KINDS[kind]
-    debit = _account_for(debit_role, entity, currency, category)
-    credit = _account_for(credit_role, entity, currency, category)
+    if kind not in KINDS and kind not in LEGACY_KINDS:
+        raise LedgerError(f"Unknown kind {kind!r}. Use one of: {', '.join(ALL_KINDS)}.")
+
+    resolved_kind = kind
+    if kind in LEGACY_KINDS:
+        resolved_kind, asserted_direction = LEGACY_KINDS[kind]
+        if contract is not None and contract.direction != asserted_direction:
+            wrong_side = "lender" if contract.direction == "receivable" else "borrower"
+            right_kind = "principal" if resolved_kind == "principal" else "repayment"
+            raise LedgerError(
+                f"You said --kind {kind!r}, but contract {contract.contract_id} "
+                f"({contract.citation}) has the book owner as the {wrong_side}. "
+                f"Use --kind {right_kind}, or name a different contract with --contract."
+            )
+
+    debit, credit, primary = _accounts_for(resolved_kind, contract, owner, currency, category)
     return {
-        "kind": kind, "date": when, "amount": amount, "currency": currency,
+        "kind": resolved_kind, "date": when, "amount": amount, "currency": currency,
         "narration": narration, "source": source,
-        "payee": entity.name if entity else "",
+        "payee": counterparty.name if counterparty else "",
         "postings": [(debit, amount), (credit, -amount)],
-        "primary_account": debit if debit_role != "cash" else credit,
+        "primary_account": primary,
+        "contract": contract.contract_id if contract else "",
+        "direction": contract.direction if contract else "",
     }
 
 
@@ -112,6 +156,7 @@ def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
         "date": plan["date"].isoformat(),
         "amount": f"{plan['amount']} {plan['currency']}",
         "kind": plan["kind"],
+        "contract": plan.get("contract", ""),
         "commit": sha,
     }
 

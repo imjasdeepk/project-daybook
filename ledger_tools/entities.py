@@ -2,6 +2,10 @@
 
 Exact matches resolve. Near matches come back as `ambiguous` with candidates so
 Claude asks you rather than guessing. Unknown names come back as `unknown`.
+
+Interest terms no longer live here -- see `contracts.py`. An entity is just a
+name, and optionally a book this ledger keeps (`book`) and a mark for whichever
+entity is the person running the tool (`self`, exposed as `is_self`).
 """
 from __future__ import annotations
 
@@ -12,12 +16,13 @@ from pathlib import Path
 
 from beancount.core import data
 
-from .store import (
-    ENTITY_ROOT, INTEREST_ROOT, LOANS_ROOT, OWED_ROOT,
-    LedgerError, Paths, append_block, cite, opens, slugify,
-)
+from .store import ENTITY_ROOT, LedgerError, Paths, append_block, cite, opens
 
 FUZZY_CUTOFF = 0.72
+
+
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in ("true", "yes", "1")
 
 
 @dataclass
@@ -28,27 +33,13 @@ class Entity:
     relation: str = ""
     aliases: list[str] = field(default_factory=list)
     default_currency: str = ""
-    rate_percent_pa: str = ""
-    method: str = ""
-    compounding: str = ""
-    day_count: str = "actual/365"
+    book: bool = False
+    is_self: bool = False
     citation: str = ""
 
     @property
     def anchor_account(self) -> str:
         return f"{ENTITY_ROOT}:{self.slug}"
-
-    @property
-    def loans_account(self) -> str:
-        return f"{LOANS_ROOT}:{self.slug}"
-
-    @property
-    def owed_account(self) -> str:
-        return f"{OWED_ROOT}:{self.slug}"
-
-    @property
-    def interest_account(self) -> str:
-        return f"{INTEREST_ROOT}:{self.slug}"
 
     def all_names(self) -> list[str]:
         return [self.name, self.slug, *self.aliases]
@@ -84,14 +75,23 @@ def load_entities(entries, root: Path | None = None) -> list[Entity]:
                 relation=str(meta.get("relation", "")),
                 aliases=_split_aliases(meta.get("aliases")),
                 default_currency=str(meta.get("default_currency", "")),
-                rate_percent_pa=str(meta.get("rate_percent_pa", "")),
-                method=str(meta.get("method", "")),
-                compounding=str(meta.get("compounding", "")),
-                day_count=str(meta.get("day_count", "actual/365")),
+                book=_truthy(meta.get("book", "")),
+                is_self=_truthy(meta.get("self", "")),
                 citation=cite(meta, root),
             )
         )
     return found
+
+
+def book_owners(entities: list[Entity]) -> list[Entity]:
+    """Entities whose books this ledger actually keeps."""
+    return [e for e in entities if e.book]
+
+
+def self_entity(entities: list[Entity]) -> Entity | None:
+    """The one entity marked as the person running the tool, if any."""
+    marked = [e for e in entities if e.is_self]
+    return marked[0] if marked else None
 
 
 def resolve(query: str, entities: list[Entity]) -> dict:
@@ -146,7 +146,7 @@ def resolve(query: str, entities: list[Entity]) -> dict:
 def format_open_directive(entity: Entity, opened_on) -> str:
     """Render the `open` directive that *is* the entity record."""
     lines = [f"{opened_on.isoformat()} open {entity.anchor_account}"]
-    def meta(key: str, value: str) -> None:
+    def meta(key: str, value) -> None:
         if value:
             lines.append(f'  {key}: "{value}"')
     meta("name", entity.name)
@@ -154,11 +154,8 @@ def format_open_directive(entity: Entity, opened_on) -> str:
     meta("relation", entity.relation)
     meta("aliases", ", ".join(entity.aliases))
     meta("default_currency", entity.default_currency)
-    meta("rate_percent_pa", entity.rate_percent_pa)
-    meta("method", entity.method)
-    meta("compounding", entity.compounding)
-    if entity.rate_percent_pa:
-        meta("day_count", entity.day_count or "actual/365")
+    meta("book", "true" if entity.book else "")
+    meta("self", "true" if entity.is_self else "")
     return "\n".join(lines)
 
 
@@ -179,6 +176,12 @@ def add_entity(p: Paths, entity: Entity, opened_on, existing: list[Entity]) -> d
             )
     if any(e.slug == entity.slug for e in existing):
         raise LedgerError(f"An entity with the account slug {entity.slug!r} already exists.")
+    if entity.is_self and any(e.is_self for e in existing):
+        mine = next(e for e in existing if e.is_self)
+        raise LedgerError(
+            f"{mine.name!r} ({mine.citation}) is already marked --self. "
+            f"Only one entity can be the person running the tool."
+        )
 
     block = format_open_directive(entity, opened_on)
     line = append_block(p.accounts, block)
@@ -216,3 +219,33 @@ def add_alias(p: Paths, entity: Entity, new_aliases: list[str], all_entities: li
         lines.insert(end, alias_line)
     p.accounts.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"slug": entity.slug, "aliases": merged}
+
+
+def set_book(p: Paths, entity: Entity, on: bool) -> dict:
+    """Rewrite an entity's `book:` metadata line in place, preserving everything else.
+
+    Turning a book on or off is account setup, not a financial transaction -- the
+    same reasoning that lets `add_alias` edit a line rather than needing a void.
+    """
+    text = p.accounts.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    anchor = f"open {entity.anchor_account}"
+    start = next((i for i, ln in enumerate(lines) if anchor in ln), None)
+    if start is None:
+        raise LedgerError(f"Could not find the record for {entity.name} to edit.")
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("  "):
+        end += 1
+    book_line = '  book: "true"'
+    existing_idx = next(
+        (i for i in range(start + 1, end) if lines[i].strip().startswith("book:")), None
+    )
+    if on:
+        if existing_idx is not None:
+            lines[existing_idx] = book_line
+        else:
+            lines.insert(end, book_line)
+    elif existing_idx is not None:
+        lines.pop(existing_idx)
+    p.accounts.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"slug": entity.slug, "book": on}

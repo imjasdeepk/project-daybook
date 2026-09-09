@@ -20,6 +20,7 @@ ENTITY_ROOT = "Equity:Entities"
 LOANS_ROOT = "Assets:Loans"
 OWED_ROOT = "Liabilities:Owed"
 INTEREST_ROOT = "Income:Interest"
+EXPENSE_INTEREST_ROOT = "Expenses:Interest"
 CASH_ROOT = "Assets:Cash"
 
 
