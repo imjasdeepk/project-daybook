@@ -1,6 +1,7 @@
 # Your actual records. These stay private and are versioned in their own
-# repository inside ledger/, so this repo can be published safely.
-ledger/
+# repository inside ledger/, so this repo can be published safely. Anchored to
+# the root: unanchored, it also swallowed .claude/skills/ledger/.
+/ledger/
 
 # Local mdloop review state, specific to one machine.
 .mdloop/
