@@ -43,6 +43,7 @@ you want to show the user something readable.
 | Add another name for someone | `daybook entity alias "Harjit Singh" --add "pitaji"` |
 | List everyone on record | `daybook entity list` |
 | Create a loan contract | `daybook contract add --lender "..." --borrower "..." --rate <rate> --started "..."` |
+| Give an IOU terms it turned out to have | `daybook contract terms <contract-id> --rate <rate>` |
 | List contracts | `daybook contract list [--lender ...] [--borrower ...] [--owner ...]` |
 | Look up one contract | `daybook contract show <contract-id-or-account>` |
 | Record something | `daybook add --kind <kind> --who ... --amount ...` (or `--lender`/`--borrower`, or `--contract`) |
@@ -84,15 +85,25 @@ silently reinterpreting it.
    - `ambiguous` — **stop and ask.** Show the candidates and their citations. Never pick.
    - `unknown` — ask whether to create them. If yes, run `daybook entity add` with the
      spoken name as an alias, so you never have to ask again.
-2. **Pick the contract.** A loan needs one. If the person already has exactly one
-   contract with the relevant lender/borrower, `daybook add` finds it on its own — you
-   do not need to look it up first. If they have **more than one**, the command
-   refuses and lists them with citations; **ask which one, never guess.** If they have
-   **none**, offer to create one: `daybook contract add --lender "..." --borrower "..."
-   --rate <rate> --method simple|compound [--compounding ...] --started "<date>"`.
-   Rate, method and day-count all need a decision — never assume a rate, and default
-   to `simple`/`actual/365` only after asking, the same way you'd never assume a
-   currency.
+2. **Pick the contract — or let it be an IOU.** If the person already has exactly one
+   contract with the relevant lender/borrower, `daybook add` finds it on its own. If
+   they have **more than one**, the command refuses and lists them with citations;
+   **ask which one, never guess.**
+
+   If they have **none**, do not interrogate them about a rate. **Not everything
+   somebody owes you is a loan.** Record it: `daybook add` opens an IOU — a debt with
+   no interest terms — and counts it in `balance` and `portfolio` like any other.
+   Then **say so**, because that is an assumption and it must be said out loud:
+
+   > "Recorded 306 USD at 2025.beancount:3, as an IOU with no interest terms. Say the
+   > word if it earns interest and I'll add them."
+
+   Only ask about terms if the user mentions interest, a rate, or calls it a loan. If
+   they do, `daybook contract add --lender ... --borrower ... --rate <rate> --method
+   simple|compound --started "<date>"`, and never assume the rate or the method — those
+   are decisions, the same as a currency. An IOU that turns out to earn interest gets
+   its terms filled in later with `daybook contract terms <id> --rate <rate>`; that is
+   the same record, not a second one.
 3. **Pin the date.** Anything other than an explicit date goes through
    `daybook date "<phrase>"`. If it returns `ambiguous`, ask. State the absolute date
    back to the user before writing. This applies to a contract's `--started` date too.
@@ -118,6 +129,17 @@ silently reinterpreting it.
    it; that is exactly what it is for.
 4. Report only what came back, with citations. Currencies stay separate: report
    "6,000 INR and 200 USD", never a single combined figure.
+
+## IOUs and loans
+
+A **loan** has terms somebody agreed: a rate, a method, a day count. An **IOU** has
+none — money owed, nothing more. Both are counted the same way by `balance`,
+`statement` and `portfolio`, so an IOU is never missing from a total.
+
+The difference shows up in interest. `daybook projection` **skips IOUs** and lists them
+under `skipped`. Read that out rather than ignoring it: "he owes 306 USD, but that's an
+IOU — it accrues nothing." Never describe an IOU as 0%. Nobody agreed 0%; nobody agreed
+anything, and a rate that was never set is not a rate of zero.
 
 ## Interest
 
@@ -163,13 +185,24 @@ you:  [daybook resolve "dad"]      -> Harjit Singh, default INR
       "Recorded at 2026.beancount:12, against the existing 8% contract."
 ```
 
-**No contract yet — ask, don't assume a rate**
+**A plain IOU — record it, say what you assumed**
 
 ```
-user: lent anmol jewellers 50 lacs
-you:  [daybook resolve "Anmol Jewellers"] -> resolved, but no contract on file with you
-      "Anmol Jewellers has no loan contract on record yet. What's the rate, and is it
-       simple or compound interest?"
+user: nikhil owes me $306 from the phuket trip in 2025
+you:  [daybook resolve "Nikhil"] -> resolved
+      [daybook add --kind lend --who nikhil --amount 306 --date 2025-07-01
+        --note "Phuket trip" --source "nikhil owes me $306 from the phuket trip in 2025"]
+      -> contract_kind: iou
+      "Recorded 306 USD at 2025.beancount:3, as an IOU with no interest terms.
+       Say the word if it earns interest and I'll add them."
+```
+
+**They said it is a loan — then ask, and assume nothing**
+
+```
+user: lent anmol jewellers 50 lacs at interest
+you:  [daybook resolve "Anmol Jewellers"] -> resolved, nothing on file with you
+      "You said at interest — what's the rate, and is it simple or compound?"
 user: 12%, compounded annually
 you:  [daybook contract add --lender "me" --borrower "Anmol Jewellers" --rate 12
         --method compound --compounding annual --started 2026-06-08]
@@ -236,5 +269,7 @@ you:  "The ledger cannot work that out. It records what happened and projects in
 - State a blended or averaged interest rate across contracts. Each contract's rate is
   its own; read each one out.
 - Fold projected interest into what is owed.
+- Describe an IOU as 0%, or project interest on one. No terms is not zero terms.
+- Interrogate someone about a rate for a debt they never called a loan.
 - Edit a ledger file directly, or delete history.
 - Record interest that has not actually been paid or received.

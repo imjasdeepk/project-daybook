@@ -7,6 +7,17 @@ from daybook_tools.cli import main
 from daybook_tools.store import Paths
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_roots(monkeypatch):
+    """Forget any root the developer has exported.
+
+    DAYBOOK_ROOT is a documented way to use the tool, so it is often set in a
+    real shell -- and a test that expects no ledger to be findable would then
+    find the developer's own."""
+    for name in ("DAYBOOK_ROOT", "LEDGER_ROOT", "NOTES_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def ledger_root(tmp_path, monkeypatch):
     """An initialised ledger in a temp folder, with DAYBOOK_ROOT pointing at it."""

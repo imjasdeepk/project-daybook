@@ -152,6 +152,30 @@ def project(entries, entity: Entity, as_of: date, root: Path | None = None, *,
     if not mine:
         raise DaybookError(f"{entity.name} has no matching loan contract to project interest for.")
 
+    # An IOU has no terms, so there is nothing to project. Reporting it as 0%
+    # would state a rate nobody agreed. It is listed as skipped instead, so the
+    # answer can say plainly that part of what is owed accrues nothing.
+    skipped = [
+        {"contract": c.contract_id, "account": c.account, "kind": "iou",
+         "lender": c.lender_slug, "borrower": c.borrower_slug,
+         "reason": "an IOU: no interest terms were agreed", "source": c.citation}
+        for c in sorted(mine, key=lambda c: c.started) if not c.has_terms
+    ]
+    mine = [c for c in mine if c.has_terms]
+    if not mine:
+        return {
+            "PROJECTION": "Nothing to project.",
+            "entity": entity.name,
+            "as_of": as_of.isoformat(),
+            "by_currency": {},
+            "contracts": [],
+            "skipped": skipped,
+            "detail": (
+                f"{entity.name} has no loan with interest terms. "
+                f"{len(skipped)} IOU{'s' if len(skipped) != 1 else ''} accrue nothing."
+            ),
+        }
+
     flat: list[dict] = []
     principal_totals: dict[str, Decimal] = defaultdict(Decimal)
     interest_totals: dict[str, Decimal] = defaultdict(Decimal)
@@ -217,6 +241,7 @@ def project(entries, entity: Entity, as_of: date, root: Path | None = None, *,
         "entity": entity.name,
         "as_of": as_of.isoformat(),
         "inputs": inputs,
+        **({"skipped": skipped} if skipped else {}),
         "by_currency": by_currency_out,
         "contracts": flat,
         "note": "Each contract accrues at its own rate. The per-currency total is the "

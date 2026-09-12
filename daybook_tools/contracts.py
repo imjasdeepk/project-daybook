@@ -43,14 +43,27 @@ class Contract:
     owner_slug: str
     counterparty_slug: str
     is_internal: bool = False
-    rate_percent_pa: str = "0"
-    method: str = "simple"
+    # Empty means an IOU: a debt with no interest terms at all. That is
+    # different from "0", which is a real loan that happens to charge nothing,
+    # and the two must stay distinguishable -- projection skips the first and
+    # reports the second.
+    rate_percent_pa: str = ""
+    method: str = ""
     compounding: str = ""
-    day_count: str = "actual/365"
+    day_count: str = ""
     started: str = ""
     currency: str = ""
     note: str = ""
     citation: str = ""
+
+    @property
+    def has_terms(self) -> bool:
+        """False for an IOU. Not everything somebody owes you is a loan."""
+        return str(self.rate_percent_pa).strip() != ""
+
+    @property
+    def kind(self) -> str:
+        return "loan" if self.has_terms else "iou"
 
     @property
     def direction(self) -> str:
@@ -90,8 +103,43 @@ def encode_rate(rate: str) -> str:
     return text.replace(".", "p").replace("-", "n")
 
 
+def validate_terms(rate, method: str = "", compounding: str = "",
+                   day_count: str = "") -> tuple[str, str, str, str]:
+    """Normalise interest terms, or explain what is wrong with them.
+
+    An empty rate means an IOU: a debt with no terms at all. Terms that were
+    never agreed are not recorded as zeroes, because stating a rate nobody set
+    would be inventing a fact.
+    """
+    rate_str = str(rate).strip()
+    if not rate_str:
+        if any((method, compounding, day_count)):
+            raise DaybookError(
+                "Interest terms were given without a rate. Pass --rate, or leave all "
+                "of --method, --compounding and --day-count off to record an IOU."
+            )
+        return "", "", "", ""
+    try:
+        Decimal(rate_str)
+    except InvalidOperation as exc:
+        raise DaybookError(f"{rate!r} is not a number I can record exactly.") from exc
+    method = (method or "simple").strip().lower()
+    if method not in ("simple", "compound"):
+        raise DaybookError(f"method must be 'simple' or 'compound', found {method!r}.")
+    compounding = (compounding or "").strip().lower()
+    if method == "compound" and not compounding:
+        compounding = "annual"
+    if method == "compound" and compounding not in PERIODS_PER_YEAR:
+        raise DaybookError(f"Unsupported compounding {compounding!r}.")
+    day_count = (day_count or "actual/365").strip().lower()
+    if day_count not in DAY_COUNT_BASIS:
+        raise DaybookError(f"Unsupported day_count {day_count!r}.")
+    return rate_str, method, compounding, day_count
+
+
 def make_contract_id(started: date, rate: str, taken: set[str]) -> str:
-    base = f"{started.isoformat()}-{encode_rate(rate)}"
+    suffix = encode_rate(rate) if str(rate).strip() else "iou"
+    base = f"{started.isoformat()}-{suffix}"
     if base not in taken:
         return base
     suffix = ord("b")
@@ -139,25 +187,8 @@ def build_contract(lender: Entity, borrower: Entity, entities: list[Entity], *,
     """Validate terms and derive the account. Raises DaybookError on anything wrong."""
     owner_slug, counterparty_slug = _resolve_owner(lender, borrower, entities)
 
-    rate_str = str(rate).strip() or "0"
-    try:
-        Decimal(rate_str)
-    except InvalidOperation as exc:
-        raise DaybookError(f"{rate!r} is not a number I can record exactly.") from exc
-
-    method = (method or "simple").strip().lower()
-    if method not in ("simple", "compound"):
-        raise DaybookError(f"method must be 'simple' or 'compound', found {method!r}.")
-
-    compounding = (compounding or "").strip().lower()
-    if method == "compound" and not compounding:
-        compounding = "annual"
-    if method == "compound" and compounding not in PERIODS_PER_YEAR:
-        raise DaybookError(f"Unsupported compounding {compounding!r}.")
-
-    day_count = (day_count or "actual/365").strip().lower()
-    if day_count not in DAY_COUNT_BASIS:
-        raise DaybookError(f"Unsupported day_count {day_count!r}.")
+    rate_str, method, compounding, day_count = validate_terms(
+        rate, method, compounding, day_count)
 
     cid = contract_id.strip() if contract_id else make_contract_id(started, rate_str, set(taken_ids))
 
@@ -195,6 +226,49 @@ def format_open_directive(contract: Contract) -> str:
     if contract.is_internal:
         meta("internal", "true")
     return "\n".join(lines)
+
+
+def set_terms(p: Paths, contract: Contract, *, rate: str, method: str = "simple",
+              compounding: str = "", day_count: str = "actual/365") -> dict:
+    """Add interest terms to an IOU that turned out to be a loan.
+
+    Only ever fills terms in where there were none -- changing agreed terms is
+    a different contract, not an edit. Like `entity alias` and `entity book`
+    this rewrites the record in place, because a contract's terms are account
+    setup rather than a transaction.
+    """
+    if contract.has_terms:
+        raise DaybookError(f"{contract.contract_id} already has terms.")
+    rate_str, method, compounding, day_count = validate_terms(
+        rate, method, compounding, day_count)
+    if not rate_str:
+        raise DaybookError("Give a --rate. Without one it stays an IOU.")
+    text = p.accounts.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    anchor = f"open {contract.account}"
+    start = next((i for i, line in enumerate(lines) if line.strip().endswith(anchor)), None)
+    if start is None:
+        raise DaybookError(f"Could not find the record for {contract.contract_id}.")
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("  "):
+        end += 1
+    terms = [
+        f'  rate_percent_pa: "{rate_str}"',
+        f'  method: "{method}"',
+        *([f'  compounding: "{compounding}"'] if compounding else []),
+        f'  day_count: "{day_count}"',
+    ]
+    kept = [line for line in lines[start + 1:end]
+            if not line.strip().startswith(("rate_percent_pa:", "method:",
+                                            "compounding:", "day_count:"))]
+    lines[start + 1:end] = [*terms, *kept]
+    p.accounts.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {
+        "contract": contract.contract_id, "account": contract.account,
+        "was": "iou", "now": "loan",
+        "rate_percent_pa": rate_str, "method": method,
+        "compounding": compounding, "day_count": day_count,
+    }
 
 
 def add_contract(p: Paths, contract: Contract, existing: list[Contract]) -> dict:
@@ -260,14 +334,17 @@ def load_contracts(entries, entities: list[Entity], root: Path | None = None,
         except DaybookError as exc:
             problems.append({"account": account, "citation": citation, "problem": str(exc)})
             continue
+        # No rate on the record means an IOU, and its other terms stay empty
+        # too. A rate of "0" is a real loan that charges nothing.
+        _rate = str(meta.get("rate_percent_pa", "")).strip()
         contract = Contract(
             contract_id=contract_id, lender_slug=str(lender_slug), borrower_slug=str(borrower_slug),
             owner_slug=owner_slug, counterparty_slug=counterparty_slug,
             is_internal=lender.book and borrower.book,
-            rate_percent_pa=str(meta.get("rate_percent_pa", "0")),
-            method=str(meta.get("method", "simple")).lower(),
+            rate_percent_pa=_rate,
+            method=str(meta.get("method", "simple" if _rate else "")).lower(),
             compounding=str(meta.get("compounding", "")).lower(),
-            day_count=str(meta.get("day_count", "actual/365")).lower(),
+            day_count=str(meta.get("day_count", "actual/365" if _rate else "")).lower(),
             started=str(meta.get("started", directive.date.isoformat())),
             currency=str(meta.get("currency", "")).upper(),
             note=str(meta.get("note", "")),

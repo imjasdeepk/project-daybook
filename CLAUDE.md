@@ -67,7 +67,7 @@ orphan every install made before the rename.
   **contract**, its own `open` directive under
   `Assets:Loans:<Owner>:<Counterparty>:<ContractId>` (owner is the lender) or
   `Liabilities:Owed:<Owner>:<Counterparty>:<ContractId>` (owner is the borrower),
-  carrying `lender`, `borrower` and terms as metadata. "Owner" is whichever party is a
+  carrying `lender`, `borrower` and, **if any were agreed**, terms as metadata. "Owner" is whichever party is a
   *book* this ledger keeps (`book: "true"` on the entity); the same borrower can hold
   several contracts, from different lenders, at different rates, because the rate lives
   on the contract, not the entity. Cash is per book: `Assets:Cash:<Owner>:<CCY>`.
@@ -76,6 +76,17 @@ orphan every install made before the rename.
   path is a derived address, never parsed to decide anything -- the contract's metadata
   is the only source of truth, and `queries.py`/`interest.py` work from the contract
   registry (`contracts.load_contracts`), not from splitting account strings.
+- **Not every debt is a loan.** A contract with no `rate_percent_pa` is an **IOU**:
+  money owed, no terms. It is the same kind of record as a loan, so `balance`,
+  `statement` and `portfolio` count both through one code path and an IOU can never be
+  quietly missing from a total -- but `interest.project` skips it and reports it under
+  `skipped`. **An absent rate is not a rate of zero:** `rate_percent_pa: "0"` is a real
+  loan somebody agreed charges nothing, and the two must stay distinguishable.
+  `contracts.validate_terms` is the single place that decides what valid terms are.
+  `daybook add` opens an IOU on the spot rather than interrogating the user about a
+  rate -- but only when nothing at all is on record between those two parties; a
+  contract running the other way is a contradiction to raise, not a second record to
+  invent. `contract terms` fills terms in later, once, and never edits agreed ones.
 - **Money is `Decimal`, always.** Never float. Beancount enforces this; do not work
   around it.
 - **Currencies never mix.** Every total is a dict keyed by currency. There is no

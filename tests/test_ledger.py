@@ -259,10 +259,94 @@ def test_unknown_person_is_refused_not_invented(paths, run):
         "--currency", "INR", "--no-commit", expect=1)
 
 
-def test_no_contract_is_refused_not_invented(paths, run):
+def test_a_debt_with_no_terms_is_recorded_as_an_iou(paths, run):
+    """Not everything somebody owes you is a loan. Recording "they owe me 10"
+    must not require inventing a rate, and must still count."""
     _add_me(run)
     run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
     run("add", "--kind", "lend", "--who", "them", "--amount", "10",
+        "--currency", "INR", "--date", "2026-01-01", "--no-commit")
+
+    entries, entities, contracts = _load_all(paths)
+    assert len(contracts) == 1
+    iou = contracts[0]
+    assert iou.has_terms is False
+    assert iou.kind == "iou"
+    assert iou.rate_percent_pa == ""
+    assert iou.method == "" and iou.day_count == ""
+    assert iou.contract_id.endswith("-iou")
+
+    # No rate was agreed, so no rate is written down.
+    text = paths.accounts.read_text(encoding="utf-8")
+    assert "rate_percent_pa" not in text.split("open " + iou.account)[1]
+
+    # And it is counted exactly like any other debt.
+    them = next(e for e in entities if e.slug == iou.counterparty_slug)
+    balance = queries.balance(entries, them, contracts, None, paths.root)
+    assert balance["payable"] == {"INR": "10"}
+
+
+def test_a_zero_percent_loan_is_not_the_same_as_an_iou(paths, run):
+    """"0%" is a term somebody agreed. Absent terms are not zero terms."""
+    _add_me(run)
+    run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
+    run("contract", "add", "--lender", "me", "--borrower", "them", "--rate", "0",
+        "--started", "2026-01-01")
+    _, _, contracts = _load_all(paths)
+    assert contracts[0].has_terms is True
+    assert contracts[0].rate_percent_pa == "0"
+    assert contracts[0].kind == "loan"
+
+
+def test_projection_skips_an_iou_rather_than_projecting_zero(paths, run):
+    from daybook_tools.cli import main
+
+    _add_me(run)
+    run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
+    run("add", "--kind", "lend", "--who", "them", "--amount", "10",
+        "--currency", "INR", "--date", "2026-01-01", "--no-commit")
+
+    entries, entities, contracts = _load_all(paths)
+    them = next(e for e in entities if e.slug != _entity(paths, "me")[2].slug)
+    result = interest.project(entries, them, date(2026, 12, 31), paths.root,
+                              contracts=contracts)
+    assert result["by_currency"] == {}
+    assert result["skipped"][0]["reason"].startswith("an IOU")
+    assert "no loan with interest terms" in result["detail"]
+    assert main(["projection", "them", "--as-of", "2026-12-31"]) == 0
+
+
+def test_an_iou_can_be_given_terms_later(paths, run):
+    """A debt that turns out to be a loan gets its terms filled in; it does not
+    need a second record."""
+    _add_me(run)
+    run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
+    run("add", "--kind", "lend", "--who", "them", "--amount", "1000",
+        "--currency", "INR", "--date", "2026-01-01", "--no-commit")
+    _, _, contracts = _load_all(paths)
+    iou = contracts[0]
+
+    run("contract", "terms", iou.contract_id, "--rate", "12", "--method", "simple")
+
+    _, _, after = _load_all(paths)
+    promoted = after[0]
+    assert promoted.contract_id == iou.contract_id, "the same record, not a new one"
+    assert promoted.has_terms is True
+    assert promoted.rate_percent_pa == "12"
+    assert promoted.method == "simple"
+    assert promoted.day_count == "actual/365"
+
+    # Terms are filled in once, never edited: a second attempt is refused.
+    run("contract", "terms", iou.contract_id, "--rate", "15", expect=1)
+
+
+def test_a_bare_principal_with_no_record_still_asks_which_way(paths, run):
+    """`lend` and `borrow` say a direction. `principal` does not, so with
+    nothing on file there is no way to know, and inventing one would be a
+    guess about who owes whom."""
+    _add_me(run)
+    run("entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR")
+    run("add", "--kind", "principal", "--who", "them", "--amount", "10",
         "--currency", "INR", "--no-commit", expect=1)
 
 
@@ -574,11 +658,13 @@ def test_a_rejected_entry_really_does_leave_nothing_behind(ledger_root, run, pat
             entry = type("E", (), {"source": None, "message": "nope"})()
             return [], [entry], {}
 
-    monkeypatch.setattr(capture, "loader", Rejects)
-    # main() turns a DaybookError into exit 1, which is what the user sees.
-    assert main(["add", "--kind", "lend", "--who", "nik", "--amount", "306",
-                 "--date", "2025-07-01", "--note", "Phuket"]) == 1
-    monkeypatch.undo()
+    # A context, not monkeypatch.undo(), which would also undo the autouse
+    # fixture that clears the ambient root variables.
+    with monkeypatch.context() as patched:
+        patched.setattr(capture, "loader", Rejects)
+        # main() turns a DaybookError into exit 1, which is what the user sees.
+        assert main(["add", "--kind", "lend", "--who", "nik", "--amount", "306",
+                     "--date", "2025-07-01", "--note", "Phuket"]) == 1
 
     after = {
         path.name: path.read_bytes()

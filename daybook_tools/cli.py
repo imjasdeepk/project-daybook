@@ -11,7 +11,9 @@ from pathlib import Path
 from beancount import loader
 
 from . import capture, dates, events, interest, notes, queries
-from .contracts import Contract, add_contract, build_contract, load_contracts
+from .contracts import (
+    Contract, add_contract, build_contract, load_contracts, set_terms,
+)
 from .entities import (
     Entity, add_alias, add_entity, load_entities, resolve, self_entity, set_book,
 )
@@ -71,6 +73,29 @@ def _require_entity(entries, who: str, root: Path) -> Entity:
     )
 
 
+def _open_iou(entries, entities, lender_slug: str, borrower_slug: str, args, root: Path):
+    """Record a debt nobody agreed terms for, without stopping to ask.
+
+    Not everything somebody owes you is a loan. An IOU carries no rate, method
+    or day count -- writing 0% would state a term nobody set -- but it is the
+    same kind of record as a loan, so one query path counts both and an IOU can
+    never be quietly missing from a total.
+    """
+    p = paths()
+    lender = next(e for e in entities if e.slug == lender_slug)
+    borrower = next(e for e in entities if e.slug == borrower_slug)
+    existing, _ = load_contracts(entries, entities, root)
+    started = _as_of(args.date) or date.today()
+    contract = build_contract(
+        lender, borrower, entities, rate="", started=started,
+        currency=(args.currency or "").upper(),
+        note="IOU: no interest terms agreed",
+        taken_ids=frozenset(c.contract_id for c in existing),
+    )
+    add_contract(p, contract, existing)
+    return contract
+
+
 def _book_owner(entries, book: str, entities: list[Entity], root: Path) -> Entity:
     if book:
         return _require_entity(entries, book, root)
@@ -98,12 +123,22 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
         if args.currency:
             candidates = [c for c in candidates if not c.currency or c.currency == args.currency.upper()]
         if not candidates:
-            raise DaybookError(
-                "No loan contract is on record for that pair, so there is nothing to record "
-                "this against. Create one with:\n"
-                '  daybook contract add --lender "<name>" --borrower "<name>" --rate <rate> '
-                "--started <date>"
-            )
+            # Only invent a record when there is genuinely nothing between these
+            # two. If something exists the other way round, the wording and the
+            # record disagree -- which is a question, not an IOU.
+            reversed_pair = [c for c in contracts
+                             if c.lender_slug == borrower_slug
+                             and c.borrower_slug == lender_slug]
+            if reversed_pair:
+                existing = "; ".join(
+                    f"{c.lender_slug} lends to {c.borrower_slug} ({c.citation})"
+                    for c in reversed_pair
+                )
+                raise DaybookError(
+                    f"That runs the opposite way to what is on record: {existing}. "
+                    f"Use the matching kind, or name --lender and --borrower explicitly."
+                )
+            return _open_iou(entries, entities, lender_slug, borrower_slug, args, root)
         if len(candidates) > 1:
             listing = "; ".join(
                 f"--contract {c.contract_id} ({c.rate_percent_pa}% from {c.started}, {c.citation})"
@@ -134,11 +169,12 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
     if args.currency:
         candidates = [c for c in candidates if not c.currency or c.currency == args.currency.upper()]
     if not candidates:
+        # Direction is unknowable from a bare `principal` between two people,
+        # so this is the one case that still has to ask.
         raise DaybookError(
-            f"No loan contract is on record between {owner.name!r} and {who.name!r}. "
-            "Create one with:\n"
-            '  daybook contract add --lender "<name>" --borrower "<name>" --rate <rate> '
-            "--started <date>"
+            f"Nothing is on record between {owner.name!r} and {who.name!r}, and "
+            f"--kind {args.kind} does not say which way it runs. Use --kind lend or "
+            f"--kind borrow, or name --lender and --borrower."
         )
     if len(candidates) > 1:
         listing = "; ".join(
@@ -375,6 +411,31 @@ def cmd_contract_show(args) -> dict:
 
 # ------------------------------------------------------------------------ capture
 
+def cmd_contract_terms(args) -> dict:
+    """Give an existing IOU the terms it turned out to have."""
+    p = paths()
+    entries, _ = load(p)
+    entities = load_entities(entries, p.root)
+    contracts, _ = load_contracts(entries, entities, p.root)
+    matches = [c for c in contracts
+               if c.contract_id == args.contract or c.account == args.contract]
+    if not matches:
+        raise DaybookError(f"No record found matching {args.contract!r}.")
+    found = matches[0]
+    if found.has_terms:
+        raise DaybookError(
+            f"{found.contract_id} already carries terms ({found.rate_percent_pa}% "
+            f"{found.method}, {found.citation}). Terms are not edited in place: record a "
+            f"new contract and move the balance across with `void` if they really changed."
+        )
+    updated = set_terms(p, found, rate=args.rate, method=args.method,
+                        compounding=args.compounding, day_count=args.day_count)
+    load(p)
+    updated["commit"] = git_commit(p.root, f"contract: terms for {found.contract_id}",
+                                   [p.accounts])
+    return updated
+
+
 def cmd_add(args) -> dict:
     p = paths()
     entries, _ = load(p)
@@ -414,8 +475,21 @@ def cmd_add(args) -> dict:
             "proposed": capture.render_entry(plan),
             "next": "Confirm with the user, then repeat the command with --force if it is genuinely separate.",
         }
+    was_new = contract is not None and not any(
+        c.contract_id == contract.contract_id for c in contracts
+    )
     result = capture.commit_entry(p, plan, commit=not args.no_commit)
     result["status"] = "recorded"
+    if contract is not None and not contract.has_terms:
+        # Say the assumption out loud. Nothing was silently decided, and the
+        # user can correct it in one command.
+        result["contract_kind"] = "iou"
+        result["terms"] = "none agreed"
+        result["note"] = (
+            f"Recorded {'against a new' if was_new else 'against an'} IOU "
+            f"({contract.contract_id}) with no interest terms. If it earns interest, "
+            f"run: daybook contract terms {contract.contract_id} --rate <rate>"
+        )
     return result
 
 
@@ -803,11 +877,13 @@ def build_parser() -> argparse.ArgumentParser:
     ka = ksub.add_parser("add")
     ka.add_argument("--lender", required=True)
     ka.add_argument("--borrower", required=True)
-    ka.add_argument("--rate", default="0", help="annual interest rate, e.g. 10.2, or 0")
-    ka.add_argument("--method", default="simple", choices=["simple", "compound"])
+    ka.add_argument("--rate", default="",
+                    help="annual interest rate, e.g. 10.2. Leave it off to record an "
+                         "IOU: a debt with no interest terms")
+    ka.add_argument("--method", default="", choices=["", "simple", "compound"])
     ka.add_argument("--compounding", default="",
                     choices=["", "annual", "semiannual", "quarterly", "monthly", "daily"])
-    ka.add_argument("--day-count", dest="day_count", default="actual/365")
+    ka.add_argument("--day-count", dest="day_count", default="")
     ka.add_argument("--started", required=True, help="a date or a phrase")
     ka.add_argument("--currency", default="")
     ka.add_argument("--id", dest="contract_id", default="", help="override the derived id")
@@ -818,6 +894,14 @@ def build_parser() -> argparse.ArgumentParser:
     kl.add_argument("--borrower", default="")
     kl.add_argument("--owner", default="")
     kl.set_defaults(func=cmd_contract_list)
+    kt = ksub.add_parser("terms", help="give an IOU the interest terms it turned out to have")
+    kt.add_argument("contract", help="contract id or account")
+    kt.add_argument("--rate", required=True)
+    kt.add_argument("--method", default="simple", choices=["simple", "compound"])
+    kt.add_argument("--compounding", default="")
+    kt.add_argument("--day-count", dest="day_count", default="actual/365")
+    kt.set_defaults(func=cmd_contract_terms)
+
     ks = ksub.add_parser("show")
     ks.add_argument("contract", help="a contract id or its full account")
     ks.set_defaults(func=cmd_contract_show)
