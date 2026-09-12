@@ -32,11 +32,77 @@ cites the file and line it came from.
   projection, with its formula printed next to it.
 - **Names are resolved, not guessed.** "dad", "papa" and "Harjit Singh" map to one
   record. A name that is close but not exact stops and asks you rather than picking.
+- **Not everything owed is a loan.** "Nikhil owes me $306 from a trip" is recorded
+  immediately as an IOU — a debt with no interest terms — and it is counted in every
+  balance and total exactly like a loan is. It is never shown as a 0% loan, because
+  nobody agreed 0%; nobody agreed anything. If it turns out to earn interest, the
+  same record is given terms later, rather than replaced.
+- **A rejected entry really does leave nothing behind.** Every write is checked by
+  Beancount before it counts, and a check that fails restores the file's exact bytes
+  — not a `git checkout`, which does nothing for an untracked file or a folder that
+  isn't a git repository at all, the default for a Drive- or Dropbox-synced ledger.
 - **Corrections are new entries.** History is appended to, never rewritten.
 
 The prose half has the same rule in its own form: **Claude never paraphrases a note
 from memory.** It quotes what you actually wrote and cites the file and line. If a
 search found nothing, it says so instead of reconstructing what you probably meant.
+
+## What this exports
+
+The whole integration surface is **one command-line binary and two Claude Code
+skills.** No server, no daemon, nothing to authenticate against, no database — an
+agent can only do what you could type yourself, so every action it takes is one you
+can reproduce and check by hand.
+
+**The binary.** `daybook` and `ledger` are the same program (the second name is kept
+so an install made before this project was renamed keeps working). Every command
+takes `--json`, placed *before* the subcommand, for structured output; drop it for a
+readable one. The same command serves the agent mid-conversation and you at a
+terminal.
+
+**Commands that capture something:**
+
+| Command | Records |
+|---|---|
+| `entity add` / `alias` / `list` / `book` | a person, place or thing, and their aliases |
+| `contract add` / `terms` / `list` / `show` | loan terms; `terms` gives an IOU interest terms later, without opening a new record |
+| `add --kind lend\|repay\|borrow\|interest\|spend\|receive` | money moving |
+| `void --voids <citation>` | a correction, as a reversing entry |
+| `event add` | a birthday, anniversary or reminder → `dates.ics` |
+| `note add` / `note amend` | a diary entry; amend appends a correction, never edits one |
+
+**Commands that answer a question:**
+
+| Command | Returns |
+|---|---|
+| `resolve "name"` | `resolved` / `ambiguous` / `unknown` — never a guess |
+| `date "phrase"` | an exact date, or `ambiguous` |
+| `balance` / `statement` / `portfolio` | what's owed, per currency, with citations |
+| `projection --as-of` | interest that *would* accrue; IOUs are listed under `skipped`, not shown as 0% |
+| `search` / `check` / `upcoming` | find an entry, validate the ledger, what's coming up |
+| `note find` / `show` / `on` / `week` / `topic` | notes, quoted verbatim, cited `file:line` |
+| `note tags` / `people` / `kinds` | the vocabulary already in use, so a tag is reused rather than duplicated |
+| `note agenda --days N` | dated notes in a window — **the hook for scheduled automation** |
+| `recall "..."` | shorthand for `note find` |
+
+**The two skills** — `.claude/skills/ledger/` and `.claude/skills/notes/` — are not
+capability; every command above works without them. They are the *behavioural
+contract*: when to reach for which command, and what to never do regardless of what
+the tool technically allows. Each states one rule (money: every figure comes from a
+command run this turn, cited `file:line`; prose: never paraphrase a note from memory,
+quote and cite it) and a `## Never` list — never pick between ambiguous candidates,
+never add two currencies, never call an IOU 0%, never edit a record file directly.
+
+**The refusals are the point.** `resolve` returns `ambiguous` instead of guessing a
+name. `add` returns `possible_duplicate` instead of silently recording something
+twice. `date` refuses a vague phrase instead of assuming one reading. A debt with no
+agreed terms becomes an IOU instead of inventing a rate. Each one hands a decision
+back to you rather than making it up, which is what keeps every answer checkable.
+
+**For scheduled automation.** `daybook --json note agenda --days N` and
+`daybook --json upcoming --days N` are side-effect-free reads that return structured
+JSON — a cron job or scheduled agent can ask "what is coming up" without touching
+anything. Nothing is built on top of that yet; it is the seam for it.
 
 ## Install
 
@@ -122,8 +188,14 @@ and quotes the line number of every number it reports back.
 The same commands work on their own, without Claude:
 
 ```bash
+uv run daybook entity add --name "Jasdeep Katariya" --aliases me --book --self \
+    --currency INR
+
 uv run daybook entity add --name "Harjit Singh" --relation father \
-    --aliases "dad, papa" --currency INR --rate 8 --method simple
+    --aliases "dad, papa" --currency INR
+
+uv run daybook contract add --lender me --borrower dad --rate 8 --method simple \
+    --started 2026-09-01
 
 uv run daybook add --kind lend --who dad --amount 5000 --date 2026-09-01 \
     --note "for the car" --source "lent dad 5k for the car last tuesday"
@@ -135,6 +207,19 @@ uv run daybook event add --summary "Dad's birthday" --date "14 March 1958"
 uv run daybook upcoming --days 365
 uv run daybook check
 uv run daybook sync
+```
+
+A debt with no agreed rate needs none of that — leave `contract add` out entirely and
+`daybook add` opens an IOU on the spot:
+
+```bash
+uv run daybook entity add --name Nikhil --aliases nikhil --currency USD
+uv run daybook add --kind lend --who nikhil --amount 306 --date 2025-07-01 \
+    --note "Phuket trip"
+# -> recorded as an IOU with no interest terms; it still counts in balance/portfolio
+
+# if it later turns out to earn interest, give the same record terms:
+uv run daybook contract terms 2025-07-01-iou --rate 12 --method simple
 ```
 
 And for notes:
