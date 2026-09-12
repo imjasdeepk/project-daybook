@@ -499,3 +499,91 @@ def test_both_console_scripts_point_at_the_same_entry_point():
     scripts = config["project"]["scripts"]
     assert scripts["daybook"] == "daybook_tools.cli:main"
     assert scripts["ledger"] == scripts["daybook"]
+
+
+# ------------------------------------------- backfilling, and honest rollback
+
+def test_backfilling_moves_the_open_date_back(ledger_root, run, paths):
+    """Recording a 2025 trip in 2026 is ordinary backfilling, and it is how
+    almost every ledger gets started. It must not need a manual step."""
+    from daybook_tools.cli import main
+    from daybook_tools.store import opens
+
+    run("entity", "add", "--name", "Me", "--aliases", "me", "--book", "--self",
+        "--currency", "USD")
+    run("entity", "add", "--name", "Nik", "--aliases", "nik", "--currency", "USD")
+    run("contract", "add", "--lender", "Me", "--borrower", "Nik", "--rate", "0",
+        "--method", "simple", "--started", "2026-09-11")
+
+    run("add", "--kind", "lend", "--who", "nik", "--amount", "306",
+        "--date", "2025-07-01", "--note", "Phuket trip")
+
+    assert main(["check"]) == 0
+    entries, _ = load(paths)
+    contract = next(o for o in opens(entries) if o.account.startswith("Assets:Loans:"))
+    assert contract.date == date(2025, 7, 1), "the open date should have moved back"
+
+    # And the entry is really there, queryable.
+    txns = queries.transactions(entries)
+    assert [t.date for t in txns] == [date(2025, 7, 1)]
+
+
+def test_backdating_only_ever_moves_a_date_earlier(ledger_root, run, paths):
+    from daybook_tools.store import backdate_open
+
+    run("entity", "add", "--name", "Nik", "--aliases", "nik", "--currency", "USD")
+    account = "Equity:Entities:Nik"
+    moved = backdate_open(paths, account, date(2020, 1, 1))
+    assert moved["changed"] is True and moved["to"] == "2020-01-01"
+
+    # A later date is not applied: an open directive never drifts forwards.
+    again = backdate_open(paths, account, date(2030, 1, 1))
+    assert again["changed"] is False
+    assert "2020-01-01 open Equity:Entities:Nik" in paths.accounts.read_text(encoding="utf-8")
+
+
+def test_a_rejected_entry_really_does_leave_nothing_behind(ledger_root, run, paths,
+                                                           monkeypatch):
+    """The error says 'nothing was saved', so that has to be true.
+
+    It was not: rollback went through `git checkout`, which silently does
+    nothing for an untracked file or a records folder that is not a git
+    repository at all -- the installer's default. A rejected entry was left
+    behind and the ledger became permanently unloadable.
+    """
+    from daybook_tools import capture
+    from daybook_tools.cli import main
+
+    run("entity", "add", "--name", "Me", "--aliases", "me", "--book", "--self",
+        "--currency", "USD")
+    run("entity", "add", "--name", "Nik", "--aliases", "nik", "--currency", "USD")
+    run("contract", "add", "--lender", "Me", "--borrower", "Nik", "--rate", "0",
+        "--method", "simple", "--started", "2026-01-01")
+    assert not (ledger_root / ".git").exists(), "this test is about the no-git case"
+
+    before = {
+        path.name: path.read_bytes()
+        for path in ledger_root.glob("*.beancount")
+    }
+    assert "2025.beancount" not in before
+
+    class Rejects:
+        """Beancount, but it hates this entry."""
+        @staticmethod
+        def load_file(path):
+            entry = type("E", (), {"source": None, "message": "nope"})()
+            return [], [entry], {}
+
+    monkeypatch.setattr(capture, "loader", Rejects)
+    # main() turns a DaybookError into exit 1, which is what the user sees.
+    assert main(["add", "--kind", "lend", "--who", "nik", "--amount", "306",
+                 "--date", "2025-07-01", "--note", "Phuket"]) == 1
+    monkeypatch.undo()
+
+    after = {
+        path.name: path.read_bytes()
+        for path in ledger_root.glob("*.beancount")
+    }
+    assert after == before, "a rejected entry must leave the files exactly as they were"
+    assert not (ledger_root / "2025.beancount").exists()
+    assert main(["check"]) == 0, "the ledger must still load"

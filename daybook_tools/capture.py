@@ -23,8 +23,8 @@ from .contracts import Contract
 from .entities import Entity
 from .queries import find_duplicates
 from .store import (
-    CASH_ROOT, DaybookError, Paths, append_block, cite, ensure_year_file,
-    git_commit, revert_files,
+    CASH_ROOT, DaybookError, Paths, Snapshot, append_block, backdate_open, cite,
+    ensure_year_file, git_commit, load, opens,
 )
 
 KINDS = {
@@ -134,25 +134,58 @@ def check_duplicates(entries, plan: dict, root: Path | None = None, window_days:
     )
 
 
-def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
-    """Append, validate with Beancount, roll back on failure, then commit."""
-    target = ensure_year_file(p, plan["date"].year)
-    block = render_entry(plan)
-    line = append_block(target, block)
+def _backdate_for(p: Paths, plan: dict) -> list[dict]:
+    """Let an entry be older than the accounts it names.
 
-    _, errors, _ = loader.load_file(str(p.main))
-    if errors:
-        revert_files(p.root, [target, p.main])
-        rendered = "\n".join(f"  {cite(e.source)}: {e.message}" for e in errors[:10])
-        raise DaybookError(
-            "Beancount rejected that entry, so nothing was saved:\n" + rendered
-        )
+    Recording a 2025 trip in 2026 is ordinary backfilling, but Beancount
+    refuses a posting to an account whose `open` date is later. Moving that
+    date back is account setup, not a rewrite of history.
+    """
+    entries, _ = load(p)
+    opened = {directive.account: directive for directive in opens(entries)}
+    moved = []
+    for account, _ in plan["postings"]:
+        directive = opened.get(account)
+        if directive is None or directive.date <= plan["date"]:
+            continue
+        result = backdate_open(p, account, plan["date"])
+        if result["changed"]:
+            moved.append(result)
+    return moved
+
+
+def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
+    """Append, validate with Beancount, roll back on failure, then commit.
+
+    The rollback restores the files' exact bytes rather than asking git to,
+    because most records folders are not git repositories and a brand-new year
+    file is untracked even in one. It has to be true that nothing was saved,
+    since that is what the error says.
+    """
+    guard = Snapshot([p.main, p.accounts, p.year_file(plan["date"].year)])
+    try:
+        backdated = _backdate_for(p, plan)
+        target = ensure_year_file(p, plan["date"].year)
+        block = render_entry(plan)
+        line = append_block(target, block)
+
+        _, errors, _ = loader.load_file(str(p.main))
+        if errors:
+            rendered = "\n".join(f"  {cite(e.source)}: {e.message}" for e in errors[:10])
+            raise DaybookError(
+                "Beancount rejected that entry, so nothing was saved:\n" + rendered
+            )
+    except Exception:
+        guard.restore()
+        raise
 
     citation = f"{target.name}:{line}"
-    sha = git_commit(p.root, f"capture: {plan['narration']}", [target, p.main]) if commit else None
+    sha = git_commit(p.root, f"capture: {plan['narration']}",
+                     [target, p.main, p.accounts]) if commit else None
     return {
         "recorded": block,
         "citation": citation,
+        **({"backdated": backdated} if backdated else {}),
         "date": plan["date"].isoformat(),
         "amount": f"{plan['amount']} {plan['currency']}",
         "kind": plan["kind"],

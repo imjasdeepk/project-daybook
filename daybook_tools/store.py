@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from beancount import loader
@@ -13,8 +14,8 @@ from beancount.core import data
 # it so that notes.py can build on the same primitives. Re-exported here so
 # every existing `from .store import ...` keeps working.
 from .files import (  # noqa: F401
-    DaybookError, append_block, git_commit, git_repo_for, git_sync, revert_files,
-    today, write_if_changed,
+    DaybookError, Snapshot, append_block, git_commit, git_repo_for, git_sync,
+    revert_files, today, write_if_changed,
 )
 
 LEDGER_DIRNAME = "ledger"
@@ -180,6 +181,29 @@ def ensure_year_file(p: Paths, year: int) -> Path:
             main_text += "\n"
         p.main.write_text(main_text + include + "\n", encoding="utf-8")
     return target
+
+
+def backdate_open(p: Paths, account: str, to: date) -> dict:
+    """Move an account's `open` date back so an earlier entry is valid.
+
+    Backfilling is how a ledger normally gets started, and an `open` date is
+    account setup rather than history: the same reasoning that lets
+    `entity book` and `entity alias` rewrite a line in place. Nothing is lost
+    -- the account simply existed earlier than we first wrote it down. Only
+    ever moves the date backwards.
+    """
+    text = p.accounts.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    anchor = f"open {account}"
+    index = next((i for i, line in enumerate(lines) if line.strip().endswith(anchor)), None)
+    if index is None:
+        raise DaybookError(f"Could not find the `open` directive for {account}.")
+    was, _, rest = lines[index].partition(" ")
+    if date.fromisoformat(was) <= to:
+        return {"account": account, "changed": False}
+    lines[index] = f"{to.isoformat()} {rest}"
+    p.accounts.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"account": account, "from": was, "to": to.isoformat(), "changed": True}
 
 
 def transactions(entries) -> list:

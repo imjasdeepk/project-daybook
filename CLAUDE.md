@@ -84,7 +84,15 @@ orphan every install made before the rename.
 - **Appends only.** `store.append_block` adds to a file; nothing rewrites history. A
   correction is a reversing entry via `daybook void`.
 - **Every write is validated.** `capture.commit_entry` loads the ledger after writing
-  and rolls the file back if Beancount rejects it.
+  and rolls the files back if Beancount rejects it. The rollback restores their exact
+  bytes (`files.Snapshot`), **never `git checkout`** -- most records folders are not git
+  repositories, and a brand-new year file is untracked even in one, so the git version
+  silently did nothing while the error still said "nothing was saved".
+- **Backfilling works.** An entry dated before the `open` date of an account it names
+  moves that date back (`store.backdate_open`), because starting a ledger by entering
+  last year's history is normal. An `open` date is account setup, so this is the same
+  in-place rewrite that `entity book` and `entity alias` already do, and it only ever
+  moves a date earlier.
 - **Ambiguity stops the machine.** `entities.resolve` returns `ambiguous` rather than
   choosing, and `dates.parse` does the same. Both are deliberate. Do not add a
   "best guess" fallback.

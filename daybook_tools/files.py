@@ -91,8 +91,41 @@ def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
         return None
 
 
+class Snapshot:
+    """Remembers the exact bytes of some files so a failed write can be undone.
+
+    Rolling back with `git checkout` only worked when the records were in a git
+    repository *and* the file was already tracked, so it silently did nothing
+    for the first entry of any year, and for everyone whose records sit in a
+    Drive or Dropbox folder -- while the caller still told the user that
+    nothing had been saved. Bytes work everywhere.
+    """
+
+    def __init__(self, paths: list[Path]):
+        self._before = {
+            path: (path.read_bytes() if path.exists() else None) for path in paths
+        }
+
+    def restore(self) -> list[Path]:
+        """Put every file back exactly as it was. Returns what had to change."""
+        undone = []
+        for path, before in self._before.items():
+            if before is None:
+                if path.exists():
+                    path.unlink()
+                    undone.append(path)
+            elif not path.exists() or path.read_bytes() != before:
+                path.write_bytes(before)
+                undone.append(path)
+        return undone
+
+
 def revert_files(root: Path, files: list[Path]) -> None:
-    """Undo uncommitted changes to the given files (used when validation fails)."""
+    """Undo uncommitted changes to the given files, via git.
+
+    Kept for callers that genuinely want git's view. Do not use it to roll back
+    a failed write: see Snapshot for why.
+    """
     repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
     if repo is None:
         return
