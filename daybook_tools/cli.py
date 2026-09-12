@@ -5,12 +5,12 @@ import argparse
 import json
 import re
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from beancount import loader
 
-from . import capture, dates, events, interest, queries
+from . import capture, dates, events, interest, notes, queries
 from .contracts import Contract, add_contract, build_contract, load_contracts
 from .entities import (
     Entity, add_alias, add_entity, load_entities, resolve, self_entity, set_book,
@@ -585,6 +585,158 @@ def cmd_upcoming(args) -> dict:
     return events.upcoming(p.events, days=args.days, frm=_as_of(args.frm))
 
 
+
+# -------------------------------------------------------------------------- notes
+
+def _notes_context(args=None):
+    """The notes folder and how it files things."""
+    root = notes.notes_root()
+    return root, notes.read_config(root)["period"]
+
+
+def _note_date(args) -> date:
+    """The date a note is filed under. Anything vague goes through the parser,
+    which asks rather than guesses, the same as everywhere else."""
+    if getattr(args, "date", None):
+        return _as_of(args.date)
+    return date.today()
+
+
+def _resolve_people(names: list[str]) -> list[str]:
+    """Turn spoken names into the names the ledger uses, when a ledger exists.
+
+    A notes-only folder has no entities, so this falls back to what was typed.
+    An `ambiguous` result is passed through as a refusal: the skill asks, this
+    never picks. The import is local so notes stay free of Beancount.
+    """
+    if not names:
+        return []
+    try:
+        from .store import load, paths as ledger_paths
+        entries, _ = load(ledger_paths())
+        known = load_entities(entries, ledger_paths().root)
+    except Exception:  # noqa: BLE001 - no ledger is the ordinary notes-only case
+        return names
+    settled = []
+    for name in names:
+        found = resolve(name, known)
+        if found["status"] == "resolved":
+            settled.append(found["entity"]["name"])
+        elif found["status"] == "ambiguous":
+            options = ", ".join(
+                f"{c['name']} ({c['citation']})" for c in found["candidates"]
+            )
+            raise DaybookError(
+                f"{name!r} could be more than one person: {options}. "
+                f"Say which, or pass the full name."
+            )
+        else:
+            settled.append(name)
+    return settled
+
+
+def cmd_note_init(args) -> dict:
+    folder = Path(args.folder).expanduser().resolve() if args.folder else Path.cwd() / "notes"
+    result = notes.init(folder, args.period)
+    called_from = Path.cwd()
+    if args.remember and folder != called_from and folder.parent != called_from:
+        pointer = called_from / notes.LOCATION_FILENAME
+        pointer.write_text(str(folder) + "\n", encoding="utf-8")
+        result["remembered_in"] = str(pointer)
+    result["next"] = 'Write your first note: daybook note add --title "..." --body "..."'
+    return result
+
+
+def cmd_note_add(args) -> dict:
+    root, period = _notes_context()
+    body = sys.stdin.read() if args.stdin else (args.body or "")
+    note = notes.Note(
+        date=_note_date(args),
+        time=args.time or datetime.now().strftime("%H:%M"),
+        title=args.title,
+        kind=args.kind,
+        who=_resolve_people([w.strip() for w in (args.who or "").split(",") if w.strip()]),
+        tags=[t.strip() for t in (args.tags or "").split(",") if t.strip()],
+        when=args.when or "",
+        source=args.source or "",
+        body=body,
+    )
+    result = notes.add_note(root, note, period=period)
+    if not args.no_commit:
+        sha = git_commit(root, f"note: {note.title}", [root / f for f in result["files_touched"]])
+        if sha:
+            result["commit"] = sha
+    return result
+
+
+def cmd_note_find(args) -> dict:
+    root, _ = _notes_context()
+    return notes.find(
+        root, args.text or "",
+        who=[w.strip() for w in (args.who or "").split(",") if w.strip()],
+        tags=[t.strip() for t in (args.tag or "").split(",") if t.strip()],
+        kind=args.kind or "",
+        since=_as_of(args.since), until=_as_of(args.until), limit=args.limit,
+    )
+
+
+def cmd_note_show(args) -> dict:
+    root, _ = _notes_context()
+    found = notes.find_by_citation(root, args.citation)
+    if found is None:
+        raise DaybookError(f"No note at {args.citation}.")
+    return found.to_dict()
+
+
+def cmd_note_week(args) -> dict:
+    root, period = _notes_context()
+    return notes.period_view(root, _as_of(args.date) or date.today(), period)
+
+
+def cmd_note_on(args) -> dict:
+    root, _ = _notes_context()
+    return notes.on_date(root, _as_of(args.date) or date.today())
+
+
+def cmd_note_topic(args) -> dict:
+    root, _ = _notes_context()
+    return notes.topic(root, args.tag, limit=args.limit)
+
+
+def cmd_note_tally(args) -> dict:
+    root, _ = _notes_context()
+    return notes.tally(root, args.note_command)
+
+
+def cmd_note_agenda(args) -> dict:
+    root, _ = _notes_context()
+    return notes.agenda(root, days=args.days, frm=_as_of(args.frm))
+
+
+def cmd_note_amend(args) -> dict:
+    root, period = _notes_context()
+    body = sys.stdin.read() if args.stdin else (args.body or "")
+    if not body.strip():
+        raise DaybookError("An amendment needs a body: say what the correction is.")
+    result = notes.amend(root, args.citation, body, period=period, at=_as_of(args.date))
+    if not args.no_commit:
+        sha = git_commit(root, f"note: amends {args.citation}",
+                         [root / f for f in result["files_touched"]])
+        if sha:
+            result["commit"] = sha
+    return result
+
+
+def cmd_note_reindex(args) -> dict:
+    root, _ = _notes_context()
+    return notes.reindex(root)
+
+
+def cmd_note_doctor(args) -> dict:
+    root, _ = _notes_context()
+    return notes.find_conflicts(root)
+
+
 # --------------------------------------------------------------------------- main
 
 def build_parser() -> argparse.ArgumentParser:
@@ -770,6 +922,102 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--on", default="", help="a single date instead of a window")
     u.add_argument("--from", dest="frm", default="")
     u.set_defaults(func=cmd_upcoming)
+
+
+    n = sub.add_parser("note", help="your diary and knowledge base")
+    nsub = n.add_subparsers(dest="note_command", required=True)
+
+    ni = nsub.add_parser("init", help="create a notes folder")
+    ni.add_argument("folder", nargs="?", default="",
+                    help="where your notes go, e.g. ~/Documents/daybook/notes")
+    ni.add_argument("--period", choices=["week", "month"], default="week",
+                    help="one file per week (default) or per month")
+    ni.add_argument("--no-remember", dest="remember", action="store_false",
+                    help="do not write a .notes-root pointer here")
+    ni.set_defaults(func=cmd_note_init)
+
+    na = nsub.add_parser("add", help="write something down")
+    na.add_argument("--title", required=True,
+                    help="a real summary: it is all the index shows")
+    na.add_argument("--body", default="")
+    na.add_argument("--stdin", action="store_true", help="read the body from stdin")
+    na.add_argument("--kind", default="note",
+                    help="log, decision, meeting, travel, idea, contact ... free text")
+    na.add_argument("--who", default="", help="comma separated")
+    na.add_argument("--tags", default="", help="comma separated; these are your topics")
+    na.add_argument("--date", default="", help="defaults to today")
+    na.add_argument("--time", default="", help="HH:MM, defaults to now")
+    na.add_argument("--when", default="",
+                    help="a date this note is ABOUT: 2026-10-03 or 2026-10-03..2026-10-09")
+    na.add_argument("--source", default="", help="the user's own words, verbatim")
+    na.add_argument("--no-commit", action="store_true")
+    na.set_defaults(func=cmd_note_add)
+
+    nf = nsub.add_parser("find", help="search your notes")
+    nf.add_argument("text", nargs="?", default="")
+    nf.add_argument("--who", default="")
+    nf.add_argument("--tag", default="")
+    nf.add_argument("--kind", default="")
+    nf.add_argument("--since", default="")
+    nf.add_argument("--until", default="")
+    nf.add_argument("--limit", type=int, default=20)
+    nf.set_defaults(func=cmd_note_find)
+
+    ns = nsub.add_parser("show", help="one note in full, by citation")
+    ns.add_argument("citation", help="e.g. 2026/2026-W37.md:5")
+    ns.set_defaults(func=cmd_note_show)
+
+    nw = nsub.add_parser("week", help="a whole period file")
+    nw.add_argument("date", nargs="?", default="")
+    nw.set_defaults(func=cmd_note_week)
+
+    nm = nsub.add_parser("month", help="a whole period file (same as week in month mode)")
+    nm.add_argument("date", nargs="?", default="")
+    nm.set_defaults(func=cmd_note_week)
+
+    no = nsub.add_parser("on", help="everything written on one day")
+    no.add_argument("date")
+    no.set_defaults(func=cmd_note_on)
+
+    nt = nsub.add_parser("topic", help="everything filed under one tag")
+    nt.add_argument("tag")
+    nt.add_argument("--limit", type=int, default=50)
+    nt.set_defaults(func=cmd_note_topic)
+
+    for name, helptext in (("tags", "every tag, with counts"),
+                           ("people", "everyone mentioned, with counts"),
+                           ("kinds", "every kind of note, with counts")):
+        tally_parser = nsub.add_parser(name, help=helptext)
+        tally_parser.set_defaults(func=cmd_note_tally)
+
+    ng = nsub.add_parser("agenda", help="notes about a date that is coming up")
+    ng.add_argument("--days", type=int, default=30)
+    ng.add_argument("--from", dest="frm", default="")
+    ng.set_defaults(func=cmd_note_agenda)
+
+    nd = nsub.add_parser("amend", help="correct a note by appending to it")
+    nd.add_argument("citation")
+    nd.add_argument("--body", default="")
+    nd.add_argument("--stdin", action="store_true")
+    nd.add_argument("--date", default="")
+    nd.add_argument("--no-commit", action="store_true")
+    nd.set_defaults(func=cmd_note_amend)
+
+    nr = nsub.add_parser("reindex", help="rebuild every index from the notes")
+    nr.set_defaults(func=cmd_note_reindex)
+
+    nn = nsub.add_parser("doctor", help="check for sync conflicts and stale indexes")
+    nn.set_defaults(func=cmd_note_doctor)
+
+    rc = sub.add_parser("recall", help="search your notes (same as `note find`)")
+    rc.add_argument("text", nargs="?", default="")
+    rc.add_argument("--who", default="")
+    rc.add_argument("--tag", default="")
+    rc.add_argument("--kind", default="")
+    rc.add_argument("--since", default="")
+    rc.add_argument("--until", default="")
+    rc.add_argument("--limit", type=int, default=20)
+    rc.set_defaults(func=cmd_note_find)
 
     return parser
 

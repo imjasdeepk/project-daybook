@@ -5,13 +5,17 @@ A daybook you talk to in plain language, built so it cannot make things up.
 *A daybook is the accounting book of original entry, where things are written down
 chronologically as they happen — and an ordinary word for a diary. It keeps both.*
 
-Tell it what happened — money lent, interest received, something bought, a birthday —
-and ask it questions later: *how much does Dad owe me today?*, *how many times have I
-lent to him?*, *whose birthdays are coming up this year?*
+It keeps two kinds of record, in one folder you own:
 
-It is a [Claude Code](https://claude.com/claude-code) skill plus a small command-line
-tool. There is no app to run, no account to make, and no database. Your records are
-plain text files in a git repository that you can read, edit and back up yourself.
+- **the ledger** — money lent, interest received, something bought, a birthday.
+  *How much does Dad owe me today? Whose birthdays are coming up?*
+- **notes** — a diary, a work log and a knowledge base, in plain Markdown.
+  *What did I say about the pipeline rollback? What did I do last week?*
+
+It is two [Claude Code](https://claude.com/claude-code) skills plus a small
+command-line tool. There is no app to run, no account to make, and no database. Your
+records are plain text files in a folder you can read, edit and back up yourself —
+git, Google Drive, Dropbox, whatever you already use.
 
 ## Why you can trust the answers
 
@@ -29,6 +33,10 @@ cites the file and line it came from.
 - **Names are resolved, not guessed.** "dad", "papa" and "Harjit Singh" map to one
   record. A name that is close but not exact stops and asks you rather than picking.
 - **Corrections are new entries.** History is appended to, never rewritten.
+
+The prose half has the same rule in its own form: **Claude never paraphrases a note
+from memory.** It quotes what you actually wrote and cites the file and line. If a
+search found nothing, it says so instead of reconstructing what you probably meant.
 
 ## Install
 
@@ -129,8 +137,58 @@ uv run daybook check
 uv run daybook sync
 ```
 
+And for notes:
+
+```bash
+uv run daybook note add --title "Ingest pipeline cutover" --kind log \
+    --who "Alice Chen, Ravi" --tags "infra, oncall" \
+    --body "Cut over at 09:02. Rollback plan was the old consumer group."
+
+uv run daybook note add --title "Tokyo trip booked" --kind travel \
+    --when "2026-10-03..2026-10-09" --tags travel
+
+uv run daybook note find "rollback"       # cites 2026/2026-W37.md:5
+uv run daybook note topic infra           # everything filed under one tag
+uv run daybook note week                  # what happened this week
+uv run daybook note agenda --days 30      # notes about a date coming up
+uv run daybook note reindex
+```
+
 Run `uv run daybook --help` for the full list. Add `--json` to any command for
 machine-readable output.
+
+## How notes are filed
+
+One Markdown file per week (or per month — your choice, per folder), plus indexes
+that are generated for you and that you never edit:
+
+```
+notes/
+  notes.toml              <- period = "week" | "month"
+  INDEX.md                <- years, counts, date range
+  2026/
+    2026-W37.md           <- the notes themselves
+    INDEX-2026-09.md      <- one line per note: title, who, tags, file:line
+    INDEX-2026.md         <- counts and totals for the year
+```
+
+Open the folder on your phone and the three index levels tell you what exists and
+where, without opening a single note file. The indexes are **derived**: searches read
+the Markdown itself, so an index that is behind can only make the folder look untidy —
+never make an answer wrong. Delete them all and `daybook note reindex` rebuilds them
+byte for byte.
+
+The levels differ in kind, which is what keeps writing fast. The month index lists
+every note; the year index is counts built from the twelve month indexes, never from
+the notes; the root index is built from the year indexes. So writing one note touches
+four small files and reads at most twelve — the same cost on your first day and in
+your tenth year. Generated files are only rewritten when their contents actually
+change, so a synced folder is not asked to re-upload a file that is already correct.
+
+A note is written once and never edited. Its line number is its citation, and a
+correction is `daybook note amend`, which appends a new entry pointing back at the
+original. That is also what makes the folder safe to sync from two machines: nothing
+ever rewrites what came before.
 
 ## Reading your own records
 

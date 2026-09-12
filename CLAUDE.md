@@ -47,6 +47,8 @@ orphan every install made before the rename.
 | Path | What it is |
 |---|---|
 | `daybook_tools/` | The Python package behind the `daybook` command |
+| `daybook_tools/files.py` | Filesystem and git plumbing. **Stdlib only, no Beancount** -- this is what lets notes work without a ledger |
+| `daybook_tools/notes.py` | The diary and knowledge base: Markdown period files, derived indexes, search |
 | `daybook_tools/store.py` | Finding, loading, appending to and committing the ledger |
 | `daybook_tools/entities.py` | Turning spoken names into accounts; alias handling |
 | `daybook_tools/contracts.py` | Loan contracts: who lent whom, on what terms -- one entity can have several |
@@ -55,7 +57,7 @@ orphan every install made before the rename.
 | `daybook_tools/events.py` | The iCalendar file for birthdays and reminders |
 | `daybook_tools/capture.py` | Writing entries, validating them, rolling back failures |
 | `daybook_tools/dates.py` | Turning phrases like "last tuesday" into exact dates |
-| `ledger/` | Only if records are kept here. **Gitignored; normally they live outside this repo.** |
+| `ledger/`, `notes/` | Only if records are kept here. **Gitignored; normally they live outside this repo.** |
 | `tests/` | pytest, run on macOS, Windows and Linux in CI |
 
 ## Conventions that matter
@@ -93,6 +95,34 @@ orphan every install made before the rename.
   `store.git_repo_for` resolves commits to whichever repository actually contains the
   files, so entries land in the private one. Never add anything under `ledger/` to
   this repository, and never write example records there.
+
+## Notes conventions
+
+- **Notes never import Beancount.** `notes.py` uses stdlib plus `files.py` and
+  `dates.py`, both dependency-free. Somebody who wants a diary should not have to own
+  a ledger, and there is a test that fails if an import creeps in. Resolving `--who`
+  against ledger entities happens in `cli.py`, not in `notes.py`, and falls back to the
+  name as typed when no ledger is reachable.
+- **One file per period, appended.** `notes/2026/2026-W37.md` in week mode,
+  `2026-09.md` in month mode, chosen per folder in `notes.toml`. A week may straddle
+  two months: **files are organised by week, indexes by each entry's own date.**
+- **The Markdown is the truth; every index is derived.** Reads parse the period files,
+  never the indexes, so a stale index can only make the folder look untidy, never make
+  an answer wrong. `daybook note reindex` must reproduce every index byte for byte --
+  there is a test.
+- **Index levels differ in kind, and that is what keeps writes cheap.** The month index
+  lists every entry; the year rollup is counts and totals built **from the twelve month
+  indexes**, never from note files; the root index is built from the year rollups. One
+  write touches four files and reads at most twelve, whatever the corpus size. A test
+  asserts exactly which files a write touches -- do not let it drift.
+- **Generated files are written only when the bytes change** (`files.write_if_changed`).
+  On a Drive or Dropbox folder an identical rewrite still costs an upload and can still
+  produce a conflicted copy.
+- **Amendments append.** `note amend` writes a new entry carrying `amends: <citation>`.
+  Citations must stay stable, because one may already have been quoted in an answer.
+- **A topic is a tag, not a second store.** `note topic` is a query. Do not add curated
+  topic pages -- duplicated prose rots.
+- **Sync conflicts are reported, never merged.** `note doctor` lists them and stops.
 
 ## Testing
 

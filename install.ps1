@@ -99,23 +99,34 @@ uv run daybook check | Out-Null
 if ($LASTEXITCODE -ne 0) { Die "The new ledger did not validate." }
 Note "Validated"
 
+$NotesDir = Join-Path $DaybookDir 'notes'
+if (Test-Path (Join-Path $NotesDir 'notes.toml')) {
+    Note "Notes already set up at $NotesDir, keeping them"
+} else {
+    uv run daybook note init $NotesDir --period week --no-remember | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "Could not create the notes folder." }
+    Note "Created $NotesDir for your diary and knowledge base"
+}
+
 $Global = if ($env:DAYBOOK_GLOBAL_SKILL) { $env:DAYBOOK_GLOBAL_SKILL } else { Ask "Use daybook from any folder, not just this one? (y/n)" "y" }
 if ($Global -match '^(y|yes)$') {
     $skills = Join-Path $HOME '.claude\skills'
     New-Item -ItemType Directory -Force -Path $skills | Out-Null
-    $link = Join-Path $skills 'ledger'
-    if (Test-Path $link) { Remove-Item $link -Recurse -Force }
-    $target = Join-Path $InstallDir '.claude\skills\ledger'
-    try {
-        New-Item -ItemType SymbolicLink -Path $link -Target $target -ErrorAction Stop | Out-Null
-    } catch {
-        # Symlinks need Developer Mode or an elevated shell on Windows; a copy
-        # works just as well, it simply will not track updates to the tool.
-        Copy-Item $target $link -Recurse
-        Note "Copied the skill (symlinks need Developer Mode); re-run after updating the tool"
+    foreach ($skill in @('ledger', 'notes')) {
+        $link = Join-Path $skills $skill
+        if (Test-Path $link) { Remove-Item $link -Recurse -Force }
+        $target = Join-Path $InstallDir (Join-Path '.claude\skills' $skill)
+        try {
+            New-Item -ItemType SymbolicLink -Path $link -Target $target -ErrorAction Stop | Out-Null
+        } catch {
+            # Symlinks need Developer Mode or an elevated shell on Windows; a copy
+            # works just as well, it simply will not track updates to the tool.
+            Copy-Item $target $link -Recurse
+            Note "Copied the $skill skill (symlinks need Developer Mode); re-run after updating"
+        }
     }
     Set-Content -Path (Join-Path $HOME '.daybook-root') -Value $DaybookDir -Encoding utf8
-    Note "Installed the skill into ~\.claude\skills and pointed it at your records"
+    Note "Installed both skills into ~\.claude\skills and pointed them at your records"
 }
 
 Step "Done"

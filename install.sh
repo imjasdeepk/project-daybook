@@ -131,6 +131,14 @@ fi
 uv run daybook check >/dev/null || die "The new ledger did not validate."
 note "Validated"
 
+if [ -f "$DAYBOOK_DIR/notes/notes.toml" ]; then
+  note "Notes already set up at $DAYBOOK_DIR/notes, keeping them"
+else
+  uv run daybook note init "$DAYBOOK_DIR/notes" --period week --no-remember >/dev/null \
+    || die "Could not create the notes folder."
+  note "Created $DAYBOOK_DIR/notes for your diary and knowledge base"
+fi
+
 # ------------------------------------------------------- use it from anywhere
 if [ -z "$DAYBOOK_GLOBAL_SKILL" ]; then
   if [ -n "$TTY" ] && confirm "
@@ -142,11 +150,13 @@ if [ -z "$DAYBOOK_GLOBAL_SKILL" ]; then
 fi
 if [ "$DAYBOOK_GLOBAL_SKILL" = "yes" ]; then
   mkdir -p "$HOME/.claude/skills"
-  rm -rf "$HOME/.claude/skills/ledger"
-  ln -s "$INSTALL_DIR/.claude/skills/ledger" "$HOME/.claude/skills/ledger"
+  for skill in ledger notes; do
+    rm -rf "$HOME/.claude/skills/$skill"
+    ln -s "$INSTALL_DIR/.claude/skills/$skill" "$HOME/.claude/skills/$skill"
+  done
   # Found by walking up from any folder inside your home directory.
   printf '%s\n' "$DAYBOOK_DIR" > "$HOME/.daybook-root"
-  note "Linked the skill into ~/.claude/skills and pointed it at your records"
+  note "Linked both skills into ~/.claude/skills and pointed them at your records"
 fi
 
 # ------------------------------------------------------------------ finish up

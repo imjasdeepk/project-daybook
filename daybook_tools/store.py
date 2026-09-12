@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 from beancount import loader
 from beancount.core import data
+
+# The filesystem and git plumbing lives in files.py, which has no Beancount in
+# it so that notes.py can build on the same primitives. Re-exported here so
+# every existing `from .store import ...` keeps working.
+from .files import (  # noqa: F401
+    DaybookError, append_block, git_commit, git_repo_for, git_sync, revert_files,
+    today, write_if_changed,
+)
 
 LEDGER_DIRNAME = "ledger"
 MAIN_FILENAME = "main.beancount"
@@ -22,10 +28,6 @@ OWED_ROOT = "Liabilities:Owed"
 INTEREST_ROOT = "Income:Interest"
 EXPENSE_INTEREST_ROOT = "Expenses:Interest"
 CASH_ROOT = "Assets:Cash"
-
-
-class DaybookError(Exception):
-    """A problem the user needs to see verbatim, not a traceback."""
 
 
 # The project was called project-ledger before prose records joined the money
@@ -180,73 +182,6 @@ def ensure_year_file(p: Paths, year: int) -> Path:
     return target
 
 
-def append_block(path: Path, block: str) -> int:
-    """Append a block of ledger text; return the 1-based line it starts on."""
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    if existing and not existing.endswith("\n\n"):
-        existing += "\n"
-    start_line = existing.count("\n") + 1
-    path.write_text(existing + block.rstrip("\n") + "\n", encoding="utf-8")
-    return start_line
-
-
-def git_repo_for(path: Path) -> Path | None:
-    """The nearest enclosing git repository, or None. Lets your private ledger
-    keep its own history separate from the public code repository."""
-    here = path.resolve()
-    for candidate in [here, *here.parents]:
-        if (candidate / ".git").exists():
-            return candidate
-    return None
-
-
-def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
-    """Commit the given files into whichever repository actually holds them."""
-    repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
-    if repo is None:
-        return None
-    root = repo
-    try:
-        subprocess.run(
-            ["git", "add", "--", *[str(f) for f in files]],
-            cwd=root, check=True, capture_output=True, text=True,
-        )
-        status = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=root, check=True, capture_output=True, text=True,
-        )
-        if not status.stdout.strip():
-            return None
-        subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=root, check=True, capture_output=True, text=True,
-        )
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=root, check=True, capture_output=True, text=True,
-        )
-        return out.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-
-
-def revert_files(root: Path, files: list[Path]) -> None:
-    """Undo uncommitted changes to the given files (used when validation fails)."""
-    repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
-    if repo is None:
-        return
-    root = repo
-    try:
-        subprocess.run(
-            ["git", "checkout", "--", *[str(f) for f in files]],
-            cwd=root, check=True, capture_output=True, text=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-
 def transactions(entries) -> list:
     return [e for e in entries if isinstance(e, data.Transaction)]
 
@@ -255,31 +190,3 @@ def opens(entries) -> list:
     return [e for e in entries if isinstance(e, data.Open)]
 
 
-def today() -> date:
-    return date.today()
-
-
-def git_sync(path: Path) -> dict:
-    """Pull then push the repository holding your records, so the copy on your
-    phone and the copy on your laptop agree. Never touches the code repository."""
-    repo = git_repo_for(path)
-    if repo is None:
-        return {"status": "no_repository",
-                "detail": f"{path} is not in a git repository, so there is nothing to sync."}
-    try:
-        remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=repo,
-                                check=True, capture_output=True, text=True).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return {"status": "no_remote", "repository": str(repo),
-                "detail": "No 'origin' remote. Add one to keep an off-machine copy."}
-    steps = []
-    for label, args in (("pull", ["pull", "--rebase", "--autostash"]), ("push", ["push"])):
-        result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
-        steps.append({"step": label, "ok": result.returncode == 0,
-                      "output": (result.stderr or result.stdout).strip()[:400]})
-        if result.returncode != 0 and label == "pull":
-            return {"status": "conflict", "repository": str(repo), "remote": remote,
-                    "steps": steps,
-                    "detail": "Pull failed. Resolve it by hand before syncing again."}
-    return {"status": "synced" if all(s["ok"] for s in steps) else "failed",
-            "repository": str(repo), "remote": remote, "steps": steps}
