@@ -23,7 +23,7 @@ from .contracts import Contract
 from .entities import Entity
 from .queries import find_duplicates
 from .store import (
-    CASH_ROOT, LedgerError, Paths, append_block, cite, ensure_year_file,
+    CASH_ROOT, DaybookError, Paths, append_block, cite, ensure_year_file,
     git_commit, revert_files,
 )
 
@@ -50,9 +50,9 @@ def parse_amount(raw: str) -> Decimal:
     try:
         value = Decimal(str(raw).replace(",", "").strip())
     except (InvalidOperation, ValueError) as exc:
-        raise LedgerError(f"{raw!r} is not a number I can record exactly.") from exc
+        raise DaybookError(f"{raw!r} is not a number I can record exactly.") from exc
     if value <= 0:
-        raise LedgerError("Amount must be greater than zero; direction is set by the kind.")
+        raise DaybookError("Amount must be greater than zero; direction is set by the kind.")
     return value
 
 
@@ -61,14 +61,14 @@ def _accounts_for(kind: str, contract: Contract | None, owner: Entity | None,
     """Returns (debit_account, credit_account, primary_account)."""
     if kind in ("spend", "receive"):
         if owner is None:
-            raise LedgerError(f"A {kind} entry needs an owner's book. Pass --book.")
+            raise DaybookError(f"A {kind} entry needs an owner's book. Pass --book.")
         cash = f"{CASH_ROOT}:{owner.slug}:{currency}"
         if kind == "spend":
             return f"Expenses:{category or 'Uncategorised'}", cash, cash
         return cash, f"Income:{category or 'Other'}", cash
 
     if contract is None:
-        raise LedgerError(f"A {kind} entry needs a contract. Pass --contract, or --lender "
+        raise DaybookError(f"A {kind} entry needs a contract. Pass --contract, or --lender "
                           "and --borrower if the pair has exactly one.")
     cash = contract.cash_account(currency)
     receivable = contract.direction == "receivable"
@@ -81,7 +81,7 @@ def _accounts_for(kind: str, contract: Contract | None, owner: Entity | None,
     if kind == "interest":
         return (cash, contract.interest_account, contract.account) if receivable \
             else (contract.interest_account, cash, contract.account)
-    raise LedgerError(f"Unknown kind {kind!r}. Use one of: {', '.join(KINDS)}.")
+    raise DaybookError(f"Unknown kind {kind!r}. Use one of: {', '.join(KINDS)}.")
 
 
 def plan_entry(kind: str, *, contract: Contract | None = None, owner: Entity | None = None,
@@ -89,7 +89,7 @@ def plan_entry(kind: str, *, contract: Contract | None = None, owner: Entity | N
               when: date, narration: str, source: str, category: str = "") -> dict:
     """Work out the two postings without writing anything."""
     if kind not in KINDS and kind not in LEGACY_KINDS:
-        raise LedgerError(f"Unknown kind {kind!r}. Use one of: {', '.join(ALL_KINDS)}.")
+        raise DaybookError(f"Unknown kind {kind!r}. Use one of: {', '.join(ALL_KINDS)}.")
 
     resolved_kind = kind
     if kind in LEGACY_KINDS:
@@ -97,7 +97,7 @@ def plan_entry(kind: str, *, contract: Contract | None = None, owner: Entity | N
         if contract is not None and contract.direction != asserted_direction:
             wrong_side = "lender" if contract.direction == "receivable" else "borrower"
             right_kind = "principal" if resolved_kind == "principal" else "repayment"
-            raise LedgerError(
+            raise DaybookError(
                 f"You said --kind {kind!r}, but contract {contract.contract_id} "
                 f"({contract.citation}) has the book owner as the {wrong_side}. "
                 f"Use --kind {right_kind}, or name a different contract with --contract."
@@ -144,7 +144,7 @@ def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
     if errors:
         revert_files(p.root, [target, p.main])
         rendered = "\n".join(f"  {cite(e.source)}: {e.message}" for e in errors[:10])
-        raise LedgerError(
+        raise DaybookError(
             "Beancount rejected that entry, so nothing was saved:\n" + rendered
         )
 

@@ -24,7 +24,7 @@ from beancount.core import account as beancount_account
 from .entities import Entity, book_owners
 from .store import (
     CASH_ROOT, EXPENSE_INTEREST_ROOT, INTEREST_ROOT, LOANS_ROOT, OWED_ROOT,
-    LedgerError, Paths, append_block, cite, opens,
+    DaybookError, Paths, append_block, cite, opens,
 )
 
 PERIODS_PER_YEAR = {
@@ -82,11 +82,11 @@ def encode_rate(rate: str) -> str:
     """'10.2' -> '10p2', '9' -> '9'. Dots are illegal in a Beancount account name."""
     text = str(rate).strip()
     if not text:
-        raise LedgerError("A contract needs a rate. Pass --rate, e.g. --rate 10.2 or --rate 0.")
+        raise DaybookError("A contract needs a rate. Pass --rate, e.g. --rate 10.2 or --rate 0.")
     try:
         Decimal(text)
     except InvalidOperation as exc:
-        raise LedgerError(f"{rate!r} is not a number I can record exactly.") from exc
+        raise DaybookError(f"{rate!r} is not a number I can record exactly.") from exc
     return text.replace(".", "p").replace("-", "n")
 
 
@@ -126,7 +126,7 @@ def _resolve_owner(lender: Entity, borrower: Entity, entities: list[Entity]) -> 
             "or, if you are already on record:\n"
             f'  ledger entity book "{lender.name}" --on'
         )
-    raise LedgerError(
+    raise DaybookError(
         f"Neither {lender.name!r} nor {borrower.name!r} is a book this ledger keeps, "
         f"so there is no one to record this contract for. {hint}"
     )
@@ -136,28 +136,28 @@ def build_contract(lender: Entity, borrower: Entity, entities: list[Entity], *,
                    rate: str, started: date, method: str = "", compounding: str = "",
                    day_count: str = "", currency: str = "", contract_id: str = "",
                    note: str = "", taken_ids: frozenset = frozenset()) -> Contract:
-    """Validate terms and derive the account. Raises LedgerError on anything wrong."""
+    """Validate terms and derive the account. Raises DaybookError on anything wrong."""
     owner_slug, counterparty_slug = _resolve_owner(lender, borrower, entities)
 
     rate_str = str(rate).strip() or "0"
     try:
         Decimal(rate_str)
     except InvalidOperation as exc:
-        raise LedgerError(f"{rate!r} is not a number I can record exactly.") from exc
+        raise DaybookError(f"{rate!r} is not a number I can record exactly.") from exc
 
     method = (method or "simple").strip().lower()
     if method not in ("simple", "compound"):
-        raise LedgerError(f"method must be 'simple' or 'compound', found {method!r}.")
+        raise DaybookError(f"method must be 'simple' or 'compound', found {method!r}.")
 
     compounding = (compounding or "").strip().lower()
     if method == "compound" and not compounding:
         compounding = "annual"
     if method == "compound" and compounding not in PERIODS_PER_YEAR:
-        raise LedgerError(f"Unsupported compounding {compounding!r}.")
+        raise DaybookError(f"Unsupported compounding {compounding!r}.")
 
     day_count = (day_count or "actual/365").strip().lower()
     if day_count not in DAY_COUNT_BASIS:
-        raise LedgerError(f"Unsupported day_count {day_count!r}.")
+        raise DaybookError(f"Unsupported day_count {day_count!r}.")
 
     cid = contract_id.strip() if contract_id else make_contract_id(started, rate_str, set(taken_ids))
 
@@ -170,7 +170,7 @@ def build_contract(lender: Entity, borrower: Entity, entities: list[Entity], *,
         currency=(currency or "").upper(), note=note,
     )
     if not beancount_account.is_valid(contract.account):
-        raise LedgerError(
+        raise DaybookError(
             f"{contract.account!r} is not a valid account name. Check the rate and names "
             "for characters Beancount cannot use in an account component."
         )
@@ -200,7 +200,7 @@ def format_open_directive(contract: Contract) -> str:
 def add_contract(p: Paths, contract: Contract, existing: list[Contract]) -> dict:
     """Append a new contract record. Refuses to create a duplicate account."""
     if any(c.account == contract.account for c in existing):
-        raise LedgerError(f"A contract already exists at {contract.account}.")
+        raise DaybookError(f"A contract already exists at {contract.account}.")
     block = format_open_directive(contract)
     line = append_block(p.accounts, block)
     return {
@@ -257,7 +257,7 @@ def load_contracts(entries, entities: list[Entity], root: Path | None = None,
             continue
         try:
             owner_slug, counterparty_slug = _resolve_owner(lender, borrower, entities)
-        except LedgerError as exc:
+        except DaybookError as exc:
             problems.append({"account": account, "citation": citation, "problem": str(exc)})
             continue
         contract = Contract(

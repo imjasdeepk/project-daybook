@@ -8,10 +8,10 @@ from decimal import Decimal
 
 import pytest
 
-from ledger_tools import interest, queries
-from ledger_tools.contracts import encode_rate, load_contracts
-from ledger_tools.entities import load_entities, resolve
-from ledger_tools.store import LedgerError, load
+from daybook_tools import interest, queries
+from daybook_tools.contracts import encode_rate, load_contracts
+from daybook_tools.entities import load_entities, resolve
+from daybook_tools.store import DaybookError, load
 
 
 def _entity(paths, name):

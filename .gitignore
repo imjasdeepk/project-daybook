@@ -1,7 +1,9 @@
 # Your actual records. These stay private and are versioned in their own
-# repository inside ledger/, so this repo can be published safely. Anchored to
-# the root: unanchored, it also swallowed .claude/skills/ledger/.
+# repository inside ledger/ and notes/, so this repo can be published safely.
+# Anchored to the root: unanchored, these also swallowed .claude/skills/ledger/
+# and would swallow .claude/skills/notes/.
 /ledger/
+/notes/
 
 # Local mdloop review state, specific to one machine.
 .mdloop/
@@ -14,4 +16,7 @@ __pycache__/
 *.egg-info/
 
 # Points at wherever your records live. Personal to this machine.
+# Both spellings: .ledger-root predates the rename and is still honoured.
+.daybook-root
 .ledger-root
+.notes-root

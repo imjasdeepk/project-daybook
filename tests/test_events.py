@@ -5,8 +5,8 @@ from datetime import date
 
 import pytest
 
-from ledger_tools import events
-from ledger_tools.store import LedgerError
+from daybook_tools import events
+from daybook_tools.store import DaybookError
 
 
 def test_yearly_birthday_is_found_a_year_out(paths, run):
@@ -37,7 +37,7 @@ def test_non_recurring_event_appears_once(paths, run):
 
 def test_duplicate_uid_is_refused(paths, run):
     run("event", "add", "--summary", "Dad birthday", "--date", "1958-03-14")
-    with pytest.raises(LedgerError, match="already exists"):
+    with pytest.raises(DaybookError, match="already exists"):
         events.add_event(paths.events, uid="birthday-dad-birthday",
                          summary="Dad birthday", on=date(1958, 3, 14))
 

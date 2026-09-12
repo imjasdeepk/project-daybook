@@ -1,6 +1,9 @@
-# project-ledger
+# project-daybook
 
-A personal ledger you talk to in plain language, built so it cannot make numbers up.
+A daybook you talk to in plain language, built so it cannot make things up.
+
+*A daybook is the accounting book of original entry, where things are written down
+chronologically as they happen — and an ordinary word for a diary. It keeps both.*
 
 Tell it what happened — money lent, interest received, something bought, a birthday —
 and ask it questions later: *how much does Dad owe me today?*, *how many times have I
@@ -38,20 +41,20 @@ you are recording.
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/imjasdeepk/project-daybook/main/install.sh | bash
 ```
 
 **Windows**
 
 ```powershell
-irm https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/imjasdeepk/project-daybook/main/install.ps1 | iex
 ```
 
 Piping a script from the internet into a shell deserves a look first, always.
 Download it, read it, then run it:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh
+curl -fsSLO https://raw.githubusercontent.com/imjasdeepk/project-daybook/main/install.sh
 less install.sh && bash install.sh
 ```
 
@@ -62,7 +65,7 @@ again later; an existing ledger is left alone.
 To skip the questions, answer them up front:
 
 ```bash
-LEDGER_DIR=~/Documents/ledger LEDGER_CURRENCIES=INR,USD LEDGER_BACKUP=git \
+DAYBOOK_DIR=~/Documents/daybook DAYBOOK_CURRENCIES=INR,USD DAYBOOK_BACKUP=git \
   bash install.sh
 ```
 
@@ -70,10 +73,10 @@ LEDGER_DIR=~/Documents/ledger LEDGER_CURRENCIES=INR,USD LEDGER_BACKUP=git \
 <summary>Or install by hand</summary>
 
 ```bash
-git clone https://github.com/imjasdeepk/project-ledger.git
-cd project-ledger
+git clone https://github.com/imjasdeepk/project-daybook.git
+cd project-daybook
 uv sync
-uv run ledger init ~/Documents/ledger --currencies INR,USD --title "My Ledger"
+uv run daybook init ~/Documents/daybook --currencies INR,USD --title "My Ledger"
 ```
 
 </details>
@@ -111,22 +114,22 @@ and quotes the line number of every number it reports back.
 The same commands work on their own, without Claude:
 
 ```bash
-uv run ledger entity add --name "Harjit Singh" --relation father \
+uv run daybook entity add --name "Harjit Singh" --relation father \
     --aliases "dad, papa" --currency INR --rate 8 --method simple
 
-uv run ledger add --kind lend --who dad --amount 5000 --date 2026-09-01 \
+uv run daybook add --kind lend --who dad --amount 5000 --date 2026-09-01 \
     --note "for the car" --source "lent dad 5k for the car last tuesday"
 
-uv run ledger balance dad
-uv run ledger statement dad
-uv run ledger projection dad --as-of 2027-09-01
-uv run ledger event add --summary "Dad's birthday" --date "14 March 1958"
-uv run ledger upcoming --days 365
-uv run ledger check
-uv run ledger sync
+uv run daybook balance dad
+uv run daybook statement dad
+uv run daybook projection dad --as-of 2027-09-01
+uv run daybook event add --summary "Dad's birthday" --date "14 March 1958"
+uv run daybook upcoming --days 365
+uv run daybook check
+uv run daybook sync
 ```
 
-Run `uv run ledger --help` for the full list. Add `--json` to any command for
+Run `uv run daybook --help` for the full list. Add `--json` to any command for
 machine-readable output.
 
 ## Reading your own records
@@ -151,23 +154,28 @@ This repository holds the tool. Your records live in a folder of your choosing,
 somewhere else entirely.
 
 ```
-project-ledger/          <- this repository: the tool and the skill
-  ledger_tools/
+project-daybook/          <- this repository: the tool and the skill
+  daybook_tools/
   .claude/skills/ledger/
-  .ledger-root           <- one line naming your folder; not published
+  .daybook-root           <- one line naming your folder; not published
 
-~/Documents/ledger/      <- your records, wherever you put them
-  main.beancount
-  accounts.beancount
-  2026.beancount
-  dates.ics
+~/Documents/daybook/      <- your records, wherever you put them
+  ledger/
+    main.beancount
+    accounts.beancount
+    2026.beancount
+    dates.ics
 ```
 
-`ledger init <folder>` writes the path into `.ledger-root`, which is gitignored
+`daybook init <folder>` writes the path into `.daybook-root`, which is gitignored
 and personal to your machine. Every session reads it, including ones that never
-load your shell profile. `LEDGER_ROOT` in the environment does the same job and
+load your shell profile. `DAYBOOK_ROOT` in the environment does the same job and
 wins when both are set. To move your records later, move the folder and update
 that one file.
+
+The project was called `project-ledger` until prose records joined the money ones.
+`LEDGER_ROOT` and `.ledger-root` are still read, and the `ledger` command still works,
+so an install made before the rename keeps working untouched.
 
 ### Backing them up is your choice
 
@@ -175,7 +183,7 @@ that one file.
 iCloud and let it sync. Nothing else to do, and no git involved.
 
 ```bash
-uv run ledger init ~/"Google Drive/My Drive/ledger" --currencies USD
+uv run daybook init ~/"Google Drive/My Drive/ledger" --currencies USD
 ```
 
 **A private git repository.** Add `--git` and your records become a repository
@@ -183,12 +191,12 @@ of their own. Each entry is then committed as you record it, giving you a dated
 history of every change.
 
 ```bash
-uv run ledger init ~/Documents/ledger --currencies USD --git
+uv run daybook init ~/Documents/daybook --currencies USD --git
 cd ~/Documents/ledger
 gh repo create <you>/my-ledger --private --source . --remote origin --push
 ```
 
-After that, `uv run ledger sync` pulls and pushes your records when you move
+After that, `uv run daybook sync` pulls and pushes your records when you move
 between machines. Keep that repository **private**. This one can be public
 without ever exposing it, because your records are not inside it.
 

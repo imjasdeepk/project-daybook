@@ -24,42 +24,56 @@ EXPENSE_INTEREST_ROOT = "Expenses:Interest"
 CASH_ROOT = "Assets:Cash"
 
 
-class LedgerError(Exception):
+class DaybookError(Exception):
     """A problem the user needs to see verbatim, not a traceback."""
 
 
-LOCATION_FILENAME = ".ledger-root"
+# The project was called project-ledger before prose records joined the money
+# ones. The old pointer file and environment variable are still read, for ever:
+# they name where somebody's real records live, and breaking that would orphan
+# every existing install. New folders get the daybook spelling.
+LOCATION_FILENAME = ".daybook-root"
+LEGACY_LOCATION_FILENAME = ".ledger-root"
+ROOT_ENV_VARS = ("DAYBOOK_ROOT", "LEDGER_ROOT")
 
 
 def _validated(root: Path, source: str) -> Path:
     """Accept a folder holding the ledger files, either directly or under ledger/."""
     if (root / LEDGER_DIRNAME / MAIN_FILENAME).exists() or (root / MAIN_FILENAME).exists():
         return root
-    raise LedgerError(
+    raise DaybookError(
         f"{source} points at {root}, but no {MAIN_FILENAME} was found there "
         f"or in {root / LEDGER_DIRNAME}."
     )
 
 
 def _from_location_file(start: Path) -> Path | None:
-    """A `.ledger-root` file naming where your records live.
+    """A `.daybook-root` file naming where your records live.
 
     This is how the tool finds records kept outside the code folder without
     depending on an environment variable, which not every session inherits.
+    The older `.ledger-root` name is honoured at every level of the walk, so a
+    folder set up before the rename keeps working untouched.
     """
     for candidate in [start, *start.parents]:
-        pointer = candidate / LOCATION_FILENAME
-        if pointer.exists():
-            raw = pointer.read_text(encoding="utf-8").strip()
-            if raw:
-                return _validated(Path(raw).expanduser().resolve(), str(pointer))
+        for name in (LOCATION_FILENAME, LEGACY_LOCATION_FILENAME):
+            pointer = candidate / name
+            if pointer.exists():
+                raw = pointer.read_text(encoding="utf-8").strip()
+                if raw:
+                    return _validated(Path(raw).expanduser().resolve(), str(pointer))
     return None
 
 
 def project_root(start: Path | None = None) -> Path:
-    """Find the records: LEDGER_ROOT, then a .ledger-root file, then this folder."""
-    env = os.environ.get("LEDGER_ROOT")
-    if env:
+    """Find the records: DAYBOOK_ROOT, then a .daybook-root file, then this folder.
+
+    LEDGER_ROOT and .ledger-root are read too, so existing installs keep working.
+    """
+    for var in ROOT_ENV_VARS:
+        env = os.environ.get(var)
+        if not env:
+            continue
         root = Path(env).expanduser().resolve()
         if (root / LEDGER_DIRNAME / MAIN_FILENAME).exists():
             return root
@@ -67,8 +81,8 @@ def project_root(start: Path | None = None) -> Path:
         # records can live in their own private repository.
         if (root / MAIN_FILENAME).exists():
             return root
-        raise LedgerError(
-            f"LEDGER_ROOT is set to {root} but no {MAIN_FILENAME} was found there "
+        raise DaybookError(
+            f"{var} is set to {root} but no {MAIN_FILENAME} was found there "
             f"or in {root / LEDGER_DIRNAME}."
         )
     here = (start or Path.cwd()).resolve()
@@ -78,8 +92,8 @@ def project_root(start: Path | None = None) -> Path:
     for candidate in [here, *here.parents]:
         if (candidate / LEDGER_DIRNAME / MAIN_FILENAME).exists():
             return candidate
-    raise LedgerError(
-        "No ledger found. Run 'uv run ledger init' to create one, or put the path to "
+    raise DaybookError(
+        "No ledger found. Run 'uv run daybook init' to create one, or put the path to "
         f"your records in a {LOCATION_FILENAME} file."
     )
 
@@ -117,14 +131,14 @@ def paths(start: Path | None = None) -> Paths:
 
 
 def load(p: Paths | None = None):
-    """Load the ledger. Raises LedgerError with Beancount's own message on failure."""
+    """Load the ledger. Raises DaybookError with Beancount's own message on failure."""
     p = p or paths()
     entries, errors, options_map = loader.load_file(str(p.main))
     if errors:
         rendered = "\n".join(
             f"  {cite(e.source)}: {e.message}" for e in errors[:20]
         )
-        raise LedgerError(f"The ledger does not parse:\n{rendered}")
+        raise DaybookError(f"The ledger does not parse:\n{rendered}")
     return entries, options_map
 
 
@@ -136,7 +150,7 @@ def cite(meta: dict | None, root: Path | None = None) -> str:
     try:
         base = root or project_root()
         shown = filename.resolve().relative_to(base).as_posix()
-    except (ValueError, LedgerError):
+    except (ValueError, DaybookError):
         shown = filename.name
     return f"{shown}:{meta.get('lineno', '?')}"
 
@@ -145,7 +159,7 @@ def slugify(name: str) -> str:
     """'Harjit Singh' -> 'HarjitSingh'. Beancount account components need this shape."""
     parts = re.findall(r"[A-Za-z0-9]+", name)
     if not parts:
-        raise LedgerError(f"Cannot build an account name from {name!r}.")
+        raise DaybookError(f"Cannot build an account name from {name!r}.")
     slug = "".join(part[:1].upper() + part[1:] for part in parts)
     if not slug[0].isupper() and not slug[0].isdigit():
         slug = slug[:1].upper() + slug[1:]

@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
-from ledger_tools import interest, queries
-from ledger_tools.contracts import load_contracts
-from ledger_tools.entities import load_entities, resolve
-from ledger_tools.store import LedgerError, Paths, load
+from daybook_tools import interest, queries
+from daybook_tools.contracts import load_contracts
+from daybook_tools.entities import load_entities, resolve
+from daybook_tools.store import DaybookError, Paths, load
 
 
 def _add_me(run):
@@ -224,7 +225,7 @@ def test_projection_is_labelled_and_separate_from_owed(paths, run):
 def test_projection_without_a_matching_contract_refuses(paths, run):
     _add_me(run)
     run("entity", "add", "--name", "Ravi Kumar", "--aliases", "ravi", "--currency", "INR")
-    with pytest.raises(LedgerError, match="no matching loan contract"):
+    with pytest.raises(DaybookError, match="no matching loan contract"):
         entries, contracts, ravi = _entity(paths, "ravi")
         interest.project(entries, ravi, date(2027, 1, 1), paths.root, contracts=contracts)
 
@@ -283,8 +284,8 @@ def test_ledger_stays_valid_after_writes(paths, run):
 def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
     """Your records may sit in a private folder of their own, so the tool can be
     published without publishing your finances."""
-    from ledger_tools.cli import main
-    from ledger_tools.store import Paths, project_root
+    from daybook_tools.cli import main
+    from daybook_tools.store import Paths, project_root
 
     data = tmp_path / "private-records"
     data.mkdir()
@@ -302,8 +303,8 @@ def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
 
 def test_ledger_subfolder_layout_still_works(tmp_path, monkeypatch):
     """Running init with no folder keeps records in ./ledger, which must still load."""
-    from ledger_tools.cli import main
-    from ledger_tools.store import Paths
+    from daybook_tools.cli import main
+    from daybook_tools.store import Paths
 
     home = tmp_path / "project"
     home.mkdir()
@@ -317,8 +318,8 @@ def test_ledger_subfolder_layout_still_works(tmp_path, monkeypatch):
 
 def test_init_remembers_where_the_records_went(tmp_path, monkeypatch):
     """Naming a folder elsewhere leaves a .ledger-root pointer behind."""
-    from ledger_tools.cli import main
-    from ledger_tools.store import LOCATION_FILENAME, project_root
+    from daybook_tools.cli import main
+    from daybook_tools.store import LOCATION_FILENAME, project_root
 
     code = tmp_path / "code"
     code.mkdir()
@@ -331,8 +332,8 @@ def test_init_remembers_where_the_records_went(tmp_path, monkeypatch):
 
 
 def test_init_can_make_the_records_a_git_repository(tmp_path, monkeypatch):
-    from ledger_tools.cli import main
-    from ledger_tools.store import git_repo_for
+    from daybook_tools.cli import main
+    from daybook_tools.store import git_repo_for
 
     records = tmp_path / "records"
     monkeypatch.chdir(tmp_path)
@@ -346,8 +347,8 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
     """A private records repo nested in a public code repo gets the commits."""
     import subprocess
 
-    from ledger_tools.cli import main
-    from ledger_tools.store import Paths, git_repo_for
+    from daybook_tools.cli import main
+    from daybook_tools.store import Paths, git_repo_for
 
     records = tmp_path / "records"
     monkeypatch.setenv("LEDGER_ROOT", str(records))
@@ -389,8 +390,8 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
 def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
     """A .ledger-root file lets the code folder and the records live apart,
     without relying on an environment variable a session may not inherit."""
-    from ledger_tools.cli import main
-    from ledger_tools.store import project_root
+    from daybook_tools.cli import main
+    from daybook_tools.store import project_root
 
     records = tmp_path / "Documents" / "ledger"
     records.mkdir(parents=True)
@@ -401,6 +402,7 @@ def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
     assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
     monkeypatch.delenv("LEDGER_ROOT")
 
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
     (code / ".ledger-root").write_text(str(records), encoding="utf-8")
     monkeypatch.chdir(code)
     assert project_root() == records.resolve()
@@ -408,12 +410,92 @@ def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
 
 
 def test_location_file_naming_a_missing_folder_says_so(tmp_path, monkeypatch):
-    from ledger_tools.store import LedgerError, project_root
+    from daybook_tools.store import DaybookError, project_root
 
     code = tmp_path / "code"
     code.mkdir()
     (code / ".ledger-root").write_text(str(tmp_path / "nowhere"), encoding="utf-8")
     monkeypatch.chdir(code)
     monkeypatch.delenv("LEDGER_ROOT", raising=False)
-    with pytest.raises(LedgerError, match="no main.beancount was found"):
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
+    with pytest.raises(DaybookError, match="no main.beancount was found"):
         project_root()
+
+
+# --------------------------------------------------------------- the rename
+
+def _init_records(tmp_path, monkeypatch):
+    """An initialised records folder, with no root variable left set."""
+    from daybook_tools.cli import main
+
+    records = tmp_path / "Documents" / "records"
+    records.mkdir(parents=True)
+    monkeypatch.setenv("DAYBOOK_ROOT", str(records))
+    assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
+    monkeypatch.delenv("DAYBOOK_ROOT")
+    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    return records
+
+
+def test_legacy_ledger_root_env_var_still_finds_the_records(tmp_path, monkeypatch):
+    """The project was renamed after people had already installed it. LEDGER_ROOT
+    names where somebody's real records live; dropping it would orphan them."""
+    from daybook_tools.store import project_root
+
+    records = _init_records(tmp_path, monkeypatch)
+    monkeypatch.setenv("LEDGER_ROOT", str(records))
+    assert project_root() == records.resolve()
+
+
+def test_legacy_ledger_root_pointer_file_still_finds_the_records(tmp_path, monkeypatch):
+    """Same promise for the pointer file, which is the form most installs use."""
+    from daybook_tools.store import project_root
+
+    records = _init_records(tmp_path, monkeypatch)
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / ".ledger-root").write_text(str(records), encoding="utf-8")
+    monkeypatch.chdir(code)
+    assert project_root() == records.resolve()
+
+
+def test_daybook_root_pointer_file_is_the_new_spelling(tmp_path, monkeypatch):
+    from daybook_tools.store import LOCATION_FILENAME, project_root
+
+    assert LOCATION_FILENAME == ".daybook-root"
+    records = _init_records(tmp_path, monkeypatch)
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / LOCATION_FILENAME).write_text(str(records), encoding="utf-8")
+    monkeypatch.chdir(code)
+    assert project_root() == records.resolve()
+
+
+def test_daybook_root_wins_when_both_variables_are_set(tmp_path, monkeypatch):
+    """Pin the precedence, so a stale LEDGER_ROOT cannot quietly shadow a
+    deliberate DAYBOOK_ROOT."""
+    from daybook_tools.cli import main
+    from daybook_tools.store import project_root
+
+    new = _init_records(tmp_path, monkeypatch)
+    old = tmp_path / "old-records"
+    old.mkdir()
+    monkeypatch.setenv("DAYBOOK_ROOT", str(old))
+    assert main(["init", str(old), "--currencies", "INR", "--no-remember"]) == 0
+
+    monkeypatch.setenv("DAYBOOK_ROOT", str(new))
+    monkeypatch.setenv("LEDGER_ROOT", str(old))
+    assert project_root() == new.resolve()
+
+
+def test_both_console_scripts_point_at_the_same_entry_point():
+    """`ledger` stays registered alongside `daybook` so existing installs and
+    muscle memory keep working."""
+    import tomllib
+
+    root = Path(__file__).resolve().parent.parent
+    with open(root / "pyproject.toml", "rb") as handle:
+        config = tomllib.load(handle)
+    scripts = config["project"]["scripts"]
+    assert scripts["daybook"] == "daybook_tools.cli:main"
+    assert scripts["ledger"] == scripts["daybook"]

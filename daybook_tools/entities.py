@@ -16,7 +16,7 @@ from pathlib import Path
 
 from beancount.core import data
 
-from .store import ENTITY_ROOT, LedgerError, Paths, append_block, cite, opens
+from .store import ENTITY_ROOT, DaybookError, Paths, append_block, cite, opens
 
 FUZZY_CUTOFF = 0.72
 
@@ -163,22 +163,22 @@ def add_entity(p: Paths, entity: Entity, opened_on, existing: list[Entity]) -> d
     """Append a new entity record. Refuses to create a second entity for a taken name."""
     clash = resolve(entity.name, existing)
     if clash["status"] == "resolved":
-        raise LedgerError(
+        raise DaybookError(
             f"{entity.name!r} already resolves to {clash['entity']['name']} "
             f"({clash['entity']['citation']}). Add an alias instead of a new entity."
         )
     for alias in entity.aliases:
         clash = resolve(alias, existing)
         if clash["status"] == "resolved":
-            raise LedgerError(
+            raise DaybookError(
                 f"The alias {alias!r} already points at {clash['entity']['name']} "
                 f"({clash['entity']['citation']})."
             )
     if any(e.slug == entity.slug for e in existing):
-        raise LedgerError(f"An entity with the account slug {entity.slug!r} already exists.")
+        raise DaybookError(f"An entity with the account slug {entity.slug!r} already exists.")
     if entity.is_self and any(e.is_self for e in existing):
         mine = next(e for e in existing if e.is_self)
-        raise LedgerError(
+        raise DaybookError(
             f"{mine.name!r} ({mine.citation}) is already marked --self. "
             f"Only one entity can be the person running the tool."
         )
@@ -197,7 +197,7 @@ def add_alias(p: Paths, entity: Entity, new_aliases: list[str], all_entities: li
     for alias in new_aliases:
         found = resolve(alias, all_entities)
         if found["status"] == "resolved" and found["entity"]["slug"] != entity.slug:
-            raise LedgerError(
+            raise DaybookError(
                 f"The alias {alias!r} already points at {found['entity']['name']}."
             )
     merged = list(dict.fromkeys([*entity.aliases, *[a.strip() for a in new_aliases if a.strip()]]))
@@ -206,7 +206,7 @@ def add_alias(p: Paths, entity: Entity, new_aliases: list[str], all_entities: li
     anchor = f"open {entity.anchor_account}"
     start = next((i for i, ln in enumerate(lines) if anchor in ln), None)
     if start is None:
-        raise LedgerError(f"Could not find the record for {entity.name} to edit.")
+        raise DaybookError(f"Could not find the record for {entity.name} to edit.")
     end = start + 1
     while end < len(lines) and lines[end].startswith("  "):
         end += 1
@@ -232,7 +232,7 @@ def set_book(p: Paths, entity: Entity, on: bool) -> dict:
     anchor = f"open {entity.anchor_account}"
     start = next((i for i, ln in enumerate(lines) if anchor in ln), None)
     if start is None:
-        raise LedgerError(f"Could not find the record for {entity.name} to edit.")
+        raise DaybookError(f"Could not find the record for {entity.name} to edit.")
     end = start + 1
     while end < len(lines) and lines[end].startswith("  "):
         end += 1

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .contracts import Contract, DAY_COUNT_BASIS, PERIODS_PER_YEAR
 from .entities import Entity
-from .store import LedgerError, cite, transactions
+from .store import DaybookError, cite, transactions
 
 getcontext().prec = 28
 
@@ -101,12 +101,12 @@ def project_contract(entries, contract: Contract, as_of: date) -> dict[str, dict
     """Project interest for one contract, at its own rate. None if there is nothing to show."""
     basis = DAY_COUNT_BASIS.get((contract.day_count or "actual/365").lower())
     if basis is None:
-        raise LedgerError(f"Unsupported day_count {contract.day_count!r} on {contract.account}.")
+        raise DaybookError(f"Unsupported day_count {contract.day_count!r} on {contract.account}.")
     periods = None
     if contract.method == "compound":
         periods = PERIODS_PER_YEAR.get((contract.compounding or "annual").strip().lower())
         if periods is None:
-            raise LedgerError(f"Unsupported compounding {contract.compounding!r} on {contract.account}.")
+            raise DaybookError(f"Unsupported compounding {contract.compounding!r} on {contract.account}.")
     rate = Decimal(str(contract.rate_percent_pa)) / Decimal(100)
 
     raw = _principal_events(entries, {contract.account}, as_of).get(contract.account, [])
@@ -150,7 +150,7 @@ def project(entries, entity: Entity, as_of: date, root: Path | None = None, *,
     if contract:
         mine = [c for c in mine if c.contract_id == contract or c.account == contract]
     if not mine:
-        raise LedgerError(f"{entity.name} has no matching loan contract to project interest for.")
+        raise DaybookError(f"{entity.name} has no matching loan contract to project interest for.")
 
     flat: list[dict] = []
     principal_totals: dict[str, Decimal] = defaultdict(Decimal)

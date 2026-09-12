@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from ledger_tools.dates import parse
+from daybook_tools.dates import parse
 
 TUESDAY = date(2026, 9, 8)
 

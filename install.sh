@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 #
-# project-ledger installer.
+# project-daybook installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/imjasdeepk/project-daybook/main/install.sh | bash
 #
 # Prefer to read it first? That is the right instinct with any piped installer:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/imjasdeepk/project-ledger/main/install.sh
+#   curl -fsSLO https://raw.githubusercontent.com/imjasdeepk/project-daybook/main/install.sh
 #   less install.sh && bash install.sh
 #
 # Answer a couple of questions and you are recording. Everything can also be set
 # up front, which skips all prompts:
 #
-#   LEDGER_DIR=~/Documents/ledger LEDGER_CURRENCIES=INR,USD LEDGER_BACKUP=git \
+#   DAYBOOK_DIR=~/Documents/daybook DAYBOOK_CURRENCIES=INR,USD DAYBOOK_BACKUP=git \
 #     bash install.sh
 #
 set -euo pipefail
 
-REPO_URL="${LEDGER_REPO:-https://github.com/imjasdeepk/project-ledger.git}"
-INSTALL_DIR="${LEDGER_INSTALL_DIR:-$HOME/project-ledger}"
-LEDGER_DIR="${LEDGER_DIR:-}"
-LEDGER_CURRENCIES="${LEDGER_CURRENCIES:-}"
-LEDGER_BACKUP="${LEDGER_BACKUP:-}"          # git | synced
-LEDGER_GLOBAL_SKILL="${LEDGER_GLOBAL_SKILL:-}"
+REPO_URL="${DAYBOOK_REPO:-https://github.com/imjasdeepk/project-daybook.git}"
+INSTALL_DIR="${DAYBOOK_INSTALL_DIR:-$HOME/project-daybook}"
+DAYBOOK_DIR="${DAYBOOK_DIR:-}"
+DAYBOOK_CURRENCIES="${DAYBOOK_CURRENCIES:-}"
+DAYBOOK_BACKUP="${DAYBOOK_BACKUP:-}"          # git | synced
+DAYBOOK_GLOBAL_SKILL="${DAYBOOK_GLOBAL_SKILL:-}"
 
 bold=$(tput bold 2>/dev/null || printf '')
 dim=$(tput dim 2>/dev/null || printf '')
@@ -57,8 +57,8 @@ confirm() { # confirm <prompt> <default y|n>
 }
 
 say ""
-say "${bold}project-ledger${reset}"
-say "A personal ledger you talk to, built so it cannot invent numbers."
+say "${bold}project-daybook${reset}"
+say "A daybook you talk to: a diary and a ledger, built so it cannot invent facts."
 
 # --------------------------------------------------------------- prerequisites
 step "Checking what you already have"
@@ -92,7 +92,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   git -C "$INSTALL_DIR" pull --ff-only --quiet \
     || note "Could not fast-forward; leaving your copy as it is."
 elif [ -e "$INSTALL_DIR" ]; then
-  die "$INSTALL_DIR already exists and is not a git checkout. Move it, or set LEDGER_INSTALL_DIR."
+  die "$INSTALL_DIR already exists and is not a git checkout. Move it, or set DAYBOOK_INSTALL_DIR."
 else
   git clone --quiet "$REPO_URL" "$INSTALL_DIR" \
     || die "Could not clone $REPO_URL. If the repository is private, check your access."
@@ -106,53 +106,53 @@ uv sync --quiet || die "uv sync failed. Run 'uv sync' in $INSTALL_DIR to see why
 # ---------------------------------------------------------------- your records
 step "Where should your records live?"
 say "    Any folder. It is yours, and nothing you record is ever stored with the tool."
-[ -z "$LEDGER_DIR" ] && LEDGER_DIR=$(ask "    Folder" "$HOME/Documents/ledger")
-LEDGER_DIR="${LEDGER_DIR/#\~/$HOME}"
+[ -z "$DAYBOOK_DIR" ] && DAYBOOK_DIR=$(ask "    Folder" "$HOME/Documents/daybook")
+DAYBOOK_DIR="${DAYBOOK_DIR/#\~/$HOME}"
 
 step "How do you want them backed up?"
 say "    ${bold}synced${reset}  put the folder in Google Drive, Dropbox or iCloud"
 say "    ${bold}git${reset}     make it a private git repository, with every entry committed"
-[ -z "$LEDGER_BACKUP" ] && LEDGER_BACKUP=$(ask "    Choice" "synced")
+[ -z "$DAYBOOK_BACKUP" ] && DAYBOOK_BACKUP=$(ask "    Choice" "synced")
 
-[ -z "$LEDGER_CURRENCIES" ] && LEDGER_CURRENCIES=$(ask "
+[ -z "$DAYBOOK_CURRENCIES" ] && DAYBOOK_CURRENCIES=$(ask "
 $(printf '%s' "    Which currencies? Comma separated")" "USD")
 
-INIT_ARGS=("$LEDGER_DIR" "--currencies" "$LEDGER_CURRENCIES")
-[ "$LEDGER_BACKUP" = "git" ] && INIT_ARGS+=("--git")
+INIT_ARGS=("$DAYBOOK_DIR" "--currencies" "$DAYBOOK_CURRENCIES")
+[ "$DAYBOOK_BACKUP" = "git" ] && INIT_ARGS+=("--git")
 
 step "Creating your ledger"
-if [ -f "$LEDGER_DIR/main.beancount" ]; then
-  note "A ledger already exists at $LEDGER_DIR, keeping it"
-  printf '%s\n' "$LEDGER_DIR" > "$INSTALL_DIR/.ledger-root"
+if [ -f "$DAYBOOK_DIR/main.beancount" ]; then
+  note "A ledger already exists at $DAYBOOK_DIR, keeping it"
+  printf '%s\n' "$DAYBOOK_DIR" > "$INSTALL_DIR/.daybook-root"
 else
-  uv run ledger init "${INIT_ARGS[@]}" >/dev/null || die "Could not create the ledger."
-  note "Created $LEDGER_DIR"
+  uv run daybook init "${INIT_ARGS[@]}" >/dev/null || die "Could not create the ledger."
+  note "Created $DAYBOOK_DIR"
 fi
-uv run ledger check >/dev/null || die "The new ledger did not validate."
+uv run daybook check >/dev/null || die "The new ledger did not validate."
 note "Validated"
 
 # ------------------------------------------------------- use it from anywhere
-if [ -z "$LEDGER_GLOBAL_SKILL" ]; then
+if [ -z "$DAYBOOK_GLOBAL_SKILL" ]; then
   if [ -n "$TTY" ] && confirm "
-    Use the ledger from any folder, not just this one?" "y"; then
-    LEDGER_GLOBAL_SKILL=yes
+    Use daybook from any folder, not just this one?" "y"; then
+    DAYBOOK_GLOBAL_SKILL=yes
   else
-    LEDGER_GLOBAL_SKILL=no
+    DAYBOOK_GLOBAL_SKILL=no
   fi
 fi
-if [ "$LEDGER_GLOBAL_SKILL" = "yes" ]; then
+if [ "$DAYBOOK_GLOBAL_SKILL" = "yes" ]; then
   mkdir -p "$HOME/.claude/skills"
   rm -rf "$HOME/.claude/skills/ledger"
   ln -s "$INSTALL_DIR/.claude/skills/ledger" "$HOME/.claude/skills/ledger"
   # Found by walking up from any folder inside your home directory.
-  printf '%s\n' "$LEDGER_DIR" > "$HOME/.ledger-root"
+  printf '%s\n' "$DAYBOOK_DIR" > "$HOME/.daybook-root"
   note "Linked the skill into ~/.claude/skills and pointed it at your records"
 fi
 
 # ------------------------------------------------------------------ finish up
 step "Done"
 say ""
-say "    Records   ${bold}$LEDGER_DIR${reset}"
+say "    Records   ${bold}$DAYBOOK_DIR${reset}"
 say "    Tool      ${bold}$INSTALL_DIR${reset}"
 say ""
 say "  Open the folder in Claude Code or Claude Cowork and just talk to it:"
@@ -162,13 +162,13 @@ say "      ${dim}how much does dad owe me?${reset}"
 say "      ${dim}dad's birthday is 14 March 1958${reset}"
 say "      ${dim}whose birthdays are coming up?${reset}"
 say ""
-say "  Or use it directly:  ${bold}cd $INSTALL_DIR && uv run ledger --help${reset}"
-if [ "$LEDGER_BACKUP" = "git" ]; then
+say "  Or use it directly:  ${bold}cd $INSTALL_DIR && uv run daybook --help${reset}"
+if [ "$DAYBOOK_BACKUP" = "git" ]; then
 say ""
 say "  Your records are a git repository. To keep an off-machine copy, add a"
-say "  ${bold}private${reset} remote and then run ${bold}uv run ledger sync${reset}:"
+say "  ${bold}private${reset} remote and then run ${bold}uv run daybook sync${reset}:"
 say ""
-say "      ${dim}cd $LEDGER_DIR${reset}"
-say "      ${dim}gh repo create <you>/my-ledger --private --source . --remote origin --push${reset}"
+say "      ${dim}cd $DAYBOOK_DIR${reset}"
+say "      ${dim}gh repo create <you>/my-daybook --private --source . --remote origin --push${reset}"
 fi
 say ""

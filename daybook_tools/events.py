@@ -13,7 +13,7 @@ from pathlib import Path
 import recurring_ical_events
 from icalendar import Calendar, Event
 
-from .store import LedgerError
+from .store import DaybookError
 
 PRODID = "-//project-ledger//EN"
 
@@ -36,7 +36,7 @@ def read_calendar(path: Path) -> Calendar:
     try:
         return Calendar.from_ical(raw)
     except Exception as exc:  # noqa: BLE001 - surface the parser's own words
-        raise LedgerError(f"{path.name} is not a valid calendar file: {exc}") from exc
+        raise DaybookError(f"{path.name} is not a valid calendar file: {exc}") from exc
 
 
 def write_calendar(path: Path, cal: Calendar) -> None:
@@ -54,7 +54,7 @@ def add_event(path: Path, *, uid: str, summary: str, on: date, kind: str = "birt
     cal = read_calendar(path)
     for component in cal.walk("VEVENT"):
         if str(component.get("UID")) == uid:
-            raise LedgerError(
+            raise DaybookError(
                 f"An event with id {uid!r} already exists ({component.get('SUMMARY')}). "
                 f"Use a different name, or delete the old one by hand."
             )

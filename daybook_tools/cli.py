@@ -1,4 +1,4 @@
-"""The `ledger` command. Every answer Claude gives comes from one of these."""
+"""The `daybook` command. Every answer Claude gives comes from one of these."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,7 @@ from .entities import (
     Entity, add_alias, add_entity, load_entities, resolve, self_entity, set_book,
 )
 from .store import (
-    LOCATION_FILENAME, LedgerError, Paths, cite, git_commit, git_sync, load, paths, slugify,
+    LOCATION_FILENAME, DaybookError, Paths, cite, git_commit, git_sync, load, paths, slugify,
 )
 
 
@@ -51,7 +51,7 @@ def _as_of(value: str | None) -> date | None:
         return None
     parsed = dates.parse(value)
     if parsed["status"] != "resolved":
-        raise LedgerError(f"Could not read the date {value!r}: {parsed.get('reason', 'ambiguous')}")
+        raise DaybookError(f"Could not read the date {value!r}: {parsed.get('reason', 'ambiguous')}")
     return date.fromisoformat(parsed["date"])
 
 def _require_entity(entries, who: str, root: Path) -> Entity:
@@ -61,13 +61,13 @@ def _require_entity(entries, who: str, root: Path) -> Entity:
         return next(e for e in load_entities(entries, root) if e.slug == data["slug"])
     if found["status"] == "ambiguous":
         names = ", ".join(f"{c['name']} ({c['citation']})" for c in found["candidates"])
-        raise LedgerError(
+        raise DaybookError(
             f"{who!r} is not clear enough to act on. Did you mean: {names}? "
             f"Ask, then use the exact name or add an alias."
         )
-    raise LedgerError(
+    raise DaybookError(
         f"I have no record of {who!r}. Create it first with: "
-        f"ledger entity add --name \"<full name>\" --aliases \"{who}\""
+        f"daybook entity add --name \"<full name>\" --aliases \"{who}\""
     )
 
 
@@ -76,9 +76,9 @@ def _book_owner(entries, book: str, entities: list[Entity], root: Path) -> Entit
         return _require_entity(entries, book, root)
     owner = self_entity(entities)
     if owner is None:
-        raise LedgerError(
+        raise DaybookError(
             "No book owner given and no entity marked --self. Pass --book, or mark "
-            'yourself with: ledger entity book "<name>" --on'
+            'yourself with: daybook entity book "<name>" --on'
         )
     return owner
 
@@ -89,7 +89,7 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
     if args.contract:
         matches = [c for c in contracts if c.contract_id == args.contract or c.account == args.contract]
         if not matches:
-            raise LedgerError(f"No contract found matching {args.contract!r}.")
+            raise DaybookError(f"No contract found matching {args.contract!r}.")
         return matches[0]
 
     def _by_pair(lender_slug: str, borrower_slug: str) -> Contract:
@@ -98,10 +98,10 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
         if args.currency:
             candidates = [c for c in candidates if not c.currency or c.currency == args.currency.upper()]
         if not candidates:
-            raise LedgerError(
+            raise DaybookError(
                 "No loan contract is on record for that pair, so there is nothing to record "
                 "this against. Create one with:\n"
-                '  ledger contract add --lender "<name>" --borrower "<name>" --rate <rate> '
+                '  daybook contract add --lender "<name>" --borrower "<name>" --rate <rate> '
                 "--started <date>"
             )
         if len(candidates) > 1:
@@ -109,7 +109,7 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
                 f"--contract {c.contract_id} ({c.rate_percent_pa}% from {c.started}, {c.citation})"
                 for c in candidates
             )
-            raise LedgerError(f"More than one contract matches. Say which: {listing}")
+            raise DaybookError(f"More than one contract matches. Say which: {listing}")
         return candidates[0]
 
     if args.lender and args.borrower:
@@ -117,7 +117,7 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
                         _require_entity(entries, args.borrower, root).slug)
 
     if not args.who:
-        raise LedgerError(f"A {args.kind} entry needs --who, or both --lender and --borrower.")
+        raise DaybookError(f"A {args.kind} entry needs --who, or both --lender and --borrower.")
     owner = _book_owner(entries, args.book, entities, root)
     who = _require_entity(entries, args.who, root)
 
@@ -134,10 +134,10 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
     if args.currency:
         candidates = [c for c in candidates if not c.currency or c.currency == args.currency.upper()]
     if not candidates:
-        raise LedgerError(
+        raise DaybookError(
             f"No loan contract is on record between {owner.name!r} and {who.name!r}. "
             "Create one with:\n"
-            '  ledger contract add --lender "<name>" --borrower "<name>" --rate <rate> '
+            '  daybook contract add --lender "<name>" --borrower "<name>" --rate <rate> '
             "--started <date>"
         )
     if len(candidates) > 1:
@@ -146,7 +146,7 @@ def _pick_contract(entries, contracts: list[Contract], entities: list[Entity],
             f"{c.rate_percent_pa}%, {c.citation})"
             for c in candidates
         )
-        raise LedgerError(f"More than one contract matches. Say which: {listing}")
+        raise DaybookError(f"More than one contract matches. Say which: {listing}")
     return candidates[0]
 
 
@@ -177,10 +177,10 @@ def cmd_init(args) -> dict:
     accounts_file = records / "accounts.beancount"
     events_file = records / "dates.ics"
     if main_file.exists() and not args.force:
-        raise LedgerError(f"{main_file} already exists. Pass --force only if you mean to replace it.")
+        raise DaybookError(f"{main_file} already exists. Pass --force only if you mean to replace it.")
     currencies = [c.strip().upper() for c in args.currencies.split(",") if c.strip()]
     if not currencies:
-        raise LedgerError("Give at least one currency, for example --currencies INR,USD")
+        raise DaybookError("Give at least one currency, for example --currencies INR,USD")
     main_file.write_text(
         MAIN_TEMPLATE.format(
             title=args.title,
@@ -198,7 +198,7 @@ def cmd_init(args) -> dict:
         events.write_calendar(events_file, events.empty_calendar())
     _, errors, _ = loader.load_file(str(main_file))
     if errors:
-        raise LedgerError("The new ledger does not parse: " + "; ".join(e.message for e in errors))
+        raise DaybookError("The new ledger does not parse: " + "; ".join(e.message for e in errors))
 
     result = {
         "records_folder": str(records),
@@ -221,7 +221,7 @@ def cmd_init(args) -> dict:
             "iCloud to back it up, or re-run with --git to version it instead."
         )
     result["next"] = (
-        'Mark yourself with: ledger entity add --name "<your name>" --aliases "me" '
+        'Mark yourself with: daybook entity add --name "<your name>" --aliases "me" '
         "--book --self"
     )
     return result
@@ -241,7 +241,7 @@ def _init_records_repo(records: Path) -> dict:
         return {"status": "failed", "detail": str(exc)[:200]}
     return {
         "status": "created",
-        "next": "Add a private remote: gh repo create <you>/my-ledger --private "
+        "next": "Add a private remote: gh repo create <you>/my-daybook --private "
                 "--source . --remote origin --push",
     }
 
@@ -259,7 +259,7 @@ def cmd_entity_add(args) -> dict:
     existing = load_entities(entries, p.root)
     slug = slugify(args.slug or args.name)
     if re.fullmatch(r"[A-Z]{3}", slug):
-        raise LedgerError(
+        raise DaybookError(
             f"{slug!r} looks like a 3-letter currency code, which would make "
             f"Assets:Cash:{slug}:<CUR> ambiguous. Pick a different --slug."
         )
@@ -300,7 +300,7 @@ def cmd_entity_book(args) -> dict:
     entries, _ = load(p)
     entity = _require_entity(entries, args.name, p.root)
     if args.book is None:
-        raise LedgerError("Say --on or --off.")
+        raise DaybookError("Say --on or --off.")
     result = set_book(p, entity, args.book)
     load(p)
     result["commit"] = git_commit(p.root, f"entity: book {entity.name} {args.book}", [p.accounts])
@@ -369,7 +369,7 @@ def cmd_contract_show(args) -> dict:
     contracts, _ = load_contracts(entries, entities, p.root)
     matches = [c for c in contracts if c.contract_id == args.contract or c.account == args.contract]
     if not matches:
-        raise LedgerError(f"No contract found matching {args.contract!r}.")
+        raise DaybookError(f"No contract found matching {args.contract!r}.")
     return matches[0].to_dict()
 
 
@@ -397,7 +397,7 @@ def cmd_add(args) -> dict:
                or (counterparty.default_currency if counterparty else "")
                or (owner.default_currency if owner else "")).upper()
     if not currency:
-        raise LedgerError("No currency given and no default recorded. Pass --currency.")
+        raise DaybookError("No currency given and no default recorded. Pass --currency.")
 
     plan = capture.plan_entry(
         args.kind, contract=contract, owner=owner, counterparty=counterparty,
@@ -569,7 +569,7 @@ def cmd_event_add(args) -> dict:
     p = paths()
     when = _as_of(args.date)
     if when is None:
-        raise LedgerError("An event needs a date: pass --date.")
+        raise DaybookError("An event needs a date: pass --date.")
     uid = args.uid or events.make_uid(args.kind, args.summary)
     return events.add_event(
         p.events, uid=uid, summary=args.summary, on=when, kind=args.kind,
@@ -589,7 +589,8 @@ def cmd_upcoming(args) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ledger", description="A personal ledger whose answers are computed, never recalled.")
+        prog="daybook",
+        description="A daybook whose answers are retrieved or computed, never recalled.")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -602,7 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--git", action="store_true",
                    help="also make that folder a git repository of its own")
     i.add_argument("--no-remember", dest="remember", action="store_false",
-                   help="do not write a .ledger-root pointer here")
+                   help="do not write a .daybook-root pointer here")
     i.add_argument("--force", action="store_true")
     i.set_defaults(func=cmd_init)
 
@@ -777,7 +778,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         _out(args.func(args), args.json)
-    except LedgerError as exc:
+    except DaybookError as exc:
         message = {"status": "error", "error": str(exc)}
         if args.json:
             print(json.dumps(message, indent=2))

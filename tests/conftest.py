@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import pytest
 
-from ledger_tools.cli import main
-from ledger_tools.store import Paths
+from daybook_tools.cli import main
+from daybook_tools.store import Paths
 
 
 @pytest.fixture
 def ledger_root(tmp_path, monkeypatch):
-    """An initialised ledger in a temp folder, with LEDGER_ROOT pointing at it."""
-    monkeypatch.setenv("LEDGER_ROOT", str(tmp_path))
+    """An initialised ledger in a temp folder, with DAYBOOK_ROOT pointing at it."""
+    monkeypatch.setenv("DAYBOOK_ROOT", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     assert main(["init", str(tmp_path), "--currencies", "INR,USD", "--no-remember"]) == 0
     return tmp_path

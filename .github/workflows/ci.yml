@@ -38,18 +38,18 @@ jobs:
       - name: Install end to end from this checkout
         if: runner.os != 'Windows'
         env:
-          LEDGER_REPO: ${{ github.workspace }}
-          LEDGER_INSTALL_DIR: ${{ runner.temp }}/installed
-          LEDGER_DIR: ${{ runner.temp }}/records
-          LEDGER_CURRENCIES: INR,USD
-          LEDGER_BACKUP: git
-          LEDGER_GLOBAL_SKILL: "no"
+          DAYBOOK_REPO: ${{ github.workspace }}
+          DAYBOOK_INSTALL_DIR: ${{ runner.temp }}/installed
+          DAYBOOK_DIR: ${{ runner.temp }}/records
+          DAYBOOK_CURRENCIES: INR,USD
+          DAYBOOK_BACKUP: git
+          DAYBOOK_GLOBAL_SKILL: "no"
         run: |
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
           bash install.sh < /dev/null
-          cd "$LEDGER_INSTALL_DIR"
-          uv run ledger check
-          uv run ledger entity add --name "CI Person" --aliases ci --currency INR
-          uv run ledger add --kind lend --who ci --amount 100 --date 2026-01-01 --note "smoke"
-          uv run ledger balance ci
+          cd "$DAYBOOK_INSTALL_DIR"
+          uv run daybook check
+          uv run daybook entity add --name "CI Person" --aliases ci --currency INR
+          uv run daybook add --kind lend --who ci --amount 100 --date 2026-01-01 --note "smoke"
+          uv run daybook balance ci

@@ -466,7 +466,7 @@ wheels = [
 ]
 
 [[package]]
-name = "project-ledger"
+name = "project-daybook"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
