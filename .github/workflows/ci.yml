@@ -37,7 +37,7 @@ jobs:
           if ($errors) { $errors | ForEach-Object { $_.Message }; exit 1 }
           Write-Host "install.ps1 parses cleanly"
 
-      - name: End-to-end suite: clean install, capture/query flows, uninstall
+      - name: "End-to-end suite: clean install, capture/query flows, uninstall"
         # Clones this checkout via the real install.sh/install.ps1, drives
         # the actually-installed binary through both halves (ledger and
         # notes) with real value assertions, then uninstalls and checks
