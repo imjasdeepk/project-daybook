@@ -63,6 +63,20 @@ uv run ruff check .
 bash -n install.sh   # if you touched it
 ```
 
+If you touched `install.sh`, `install.ps1`, `store.py`, `capture.py` or `files.py`,
+also run the end-to-end suite: a clean install through the real installer, a battery
+of capture/query flows against the actually-installed binary, and an uninstall,
+fully isolated in a throwaway `$HOME`.
+
+```bash
+uv run python scripts/e2e_test.py
+```
+
+It is the outer loop `uv run pytest` cannot be: it is what caught the
+`Assets:Cash:*` backdating bug, because it drives the real installed binary through
+a realistic, out-of-order capture session rather than the unit-level scenarios the
+pytest suite happens to construct. CI runs it on every push and PR.
+
 Describe what changed and why, not just what. If you're touching `capture.py`,
 `notes.py`, `store.py` or `files.py`, say which of the rules above the change
 keeps or touches — that's what a reviewer will be checking first.

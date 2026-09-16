@@ -384,6 +384,11 @@ Tests run on macOS, Windows and Linux in CI. If you moved or renamed this checko
 `.venv` still points at the old path and `uv sync` alone will not repair it — run
 `uv sync --extra dev --reinstall`, or delete `.venv` and sync again.
 
+`uv run python scripts/e2e_test.py` is the other suite: a clean install through the
+real installer, capture and query flows against the actually-installed binary, and
+an uninstall, all in a throwaway `$HOME`. It exercises the install path itself, not
+just the library — CI runs it alongside the unit tests on every push.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules a change here has to keep, and
 [CHANGELOG.md](CHANGELOG.md) for what has shipped. [SECURITY.md](SECURITY.md) covers
 the threat model and how to report a vulnerability.
