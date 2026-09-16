@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-16
 
 First public release.
 
@@ -27,3 +27,14 @@ First public release.
   "there was no repository to commit to."
 - `daybook init` / `daybook note init` refuse a target folder inside the tool's
   own checkout, so records can never land in the public repository.
+- Backdating an entry now works even when it involves a cash account
+  (`Assets:Cash:<owner>:<currency>`) that a *later* entry already used: those
+  accounts have no explicit `open` line of their own, so a genuinely older
+  entry (an old receipt found after the fact, say) used to be refused with
+  "Could not find the `open` directive."
+
+### Added since
+- `scripts/e2e_test.py` — a real end-to-end suite: installs through the actual
+  installer, drives the actually-installed binary through capture and query
+  flows on both halves, confirms a reinstall never loses data, and uninstalls
+  cleanly. Runs in CI on every push and PR.
