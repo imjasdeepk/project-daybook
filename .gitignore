@@ -16,7 +16,5 @@ __pycache__/
 *.egg-info/
 
 # Points at wherever your records live. Personal to this machine.
-# Both spellings: .ledger-root predates the rename and is still honoured.
 .daybook-root
-.ledger-root
-.notes-root
+.daybook-notes-root

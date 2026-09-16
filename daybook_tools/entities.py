@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-
-from beancount.core import data
 
 from .store import ENTITY_ROOT, DaybookError, Paths, append_block, cite, opens
 
@@ -118,8 +116,8 @@ def resolve(query: str, entities: list[Entity]) -> dict:
             "candidates": [e.to_dict() for e in exact],
         }
 
-    # Fuzzy matching also indexes individual name tokens, so 'harjeet' can find
-    # 'Harjit Singh' -- comparing only against the full string would miss it.
+    # Fuzzy matching also indexes individual name tokens, so 'robet' can find
+    # 'Robert Diaz' -- comparing only against the full string would miss it.
     lookup: dict[str, Entity] = {}
     for e in entities:
         for n in e.all_names():

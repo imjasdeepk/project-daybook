@@ -28,8 +28,8 @@ from pathlib import Path
 
 from .files import DaybookError, append_block, write_if_changed
 
-LOCATION_FILENAME = ".notes-root"
-ROOT_ENV_VAR = "NOTES_ROOT"
+LOCATION_FILENAME = ".daybook-notes-root"
+ROOT_ENV_VAR = "DAYBOOK_NOTES_ROOT"
 CONFIG_FILENAME = "notes.toml"
 NOTES_DIRNAME = "notes"
 PERIODS = ("week", "month")
@@ -72,7 +72,7 @@ def _daybook_notes_dir() -> Path | None:
 
 
 def notes_root(start: Path | None = None, *, must_exist: bool = True) -> Path:
-    """NOTES_ROOT, then a .notes-root pointer, then <daybook root>/notes, then ./notes."""
+    """DAYBOOK_NOTES_ROOT, then a .daybook-notes-root pointer, then <daybook root>/notes, then ./notes."""
     env = os.environ.get(ROOT_ENV_VAR)
     if env:
         root = Path(env).expanduser().resolve()
@@ -242,8 +242,24 @@ def render(note: Note) -> str:
     body = note.body.strip("\n")
     if body:
         lines.append("")
-        lines.append(body)
+        lines.append(_escape_body(body))
     return "\n".join(lines) + "\n"
+
+
+def _escape_body(body: str) -> str:
+    """Indent any body line that would otherwise look like a new entry's
+    heading to the parser (`HEADING`'s `^##  YYYY-MM-DD HH:MM ...`).
+
+    A note is free to quote or paste anything, including another note's own
+    heading line -- inside `note amend`, for instance. Without this, such a
+    line would silently split one note into two and shift every citation
+    after it. Indenting by two spaces keeps the text as plain Markdown and
+    keeps the line count -- and so every later citation -- unchanged.
+    """
+    return "\n".join(
+        f"  {line}" if HEADING.match(line) else line
+        for line in body.split("\n")
+    )
 
 
 def parse_text(text: str, file: str = "") -> list[Note]:

@@ -15,10 +15,10 @@ from daybook_tools.files import DaybookError
 @pytest.fixture
 def notes_root(tmp_path, monkeypatch):
     """A notes folder with no ledger anywhere near it."""
-    for leftover in ("DAYBOOK_ROOT", "LEDGER_ROOT", "NOTES_ROOT"):
+    for leftover in ("DAYBOOK_ROOT", "DAYBOOK_NOTES_ROOT"):
         monkeypatch.delenv(leftover, raising=False)
     root = tmp_path / "notes"
-    monkeypatch.setenv("NOTES_ROOT", str(root))
+    monkeypatch.setenv("DAYBOOK_NOTES_ROOT", str(root))
     monkeypatch.chdir(tmp_path)
     assert main(["note", "init", str(root), "--period", "week", "--no-remember"]) == 0
     return root
@@ -67,10 +67,10 @@ def test_a_note_round_trips_through_the_files(notes_root):
 
 
 def test_month_mode_files_by_month_instead(tmp_path, monkeypatch):
-    for leftover in ("DAYBOOK_ROOT", "LEDGER_ROOT", "NOTES_ROOT"):
+    for leftover in ("DAYBOOK_ROOT", "DAYBOOK_NOTES_ROOT"):
         monkeypatch.delenv(leftover, raising=False)
     root = tmp_path / "monthly"
-    monkeypatch.setenv("NOTES_ROOT", str(root))
+    monkeypatch.setenv("DAYBOOK_NOTES_ROOT", str(root))
     monkeypatch.chdir(tmp_path)
     assert main(["note", "init", str(root), "--period", "month", "--no-remember"]) == 0
 
@@ -338,6 +338,65 @@ def test_prose_may_contain_markdown_headings(notes_root):
     assert "## Decisions" in stored[0].body
 
 
+def test_a_body_that_looks_like_another_entrys_heading_stays_one_note(notes_root):
+    """A body containing another entry's full heading shape (date, time and
+    title) would, unescaped, be parsed as a second entry -- silently forking
+    one note into two and shifting every citation after it. This is the exact
+    shape `HEADING` matches, unlike the plain `## Decisions` case above."""
+    add("Real note", date="2026-09-11",
+        body="She pasted this in:\n## 2026-09-16 10:00  Forged entry\nand kept typing.")
+    stored = notes.load_notes(notes_root)
+    assert len(stored) == 1
+    assert stored[0].title == "Real note"
+    assert "Forged entry" in stored[0].body
+
+    # The month index agrees: one entry, not two.
+    rows = notes.parse_month_index(notes_root / "2026" / "INDEX-2026-09.md")
+    assert len(rows) == 1
+
+    # The citation still resolves to the original title -- nothing shifted.
+    found = notes.find_by_citation(notes_root, stored[0].citation)
+    assert found.title == "Real note"
+
+
+def test_a_note_with_an_escaped_heading_survives_reindex_byte_for_byte(notes_root):
+    """Extends the indexes-are-derived guarantee to the escaped-body case: the
+    escaping happens once, at write time, so deleting and rebuilding the
+    indexes must not re-escape (or un-escape) anything."""
+    add("Real note", date="2026-09-11",
+        body="She pasted this in:\n## 2026-09-16 10:00  Forged entry\nand kept typing.")
+    before = {name: (notes_root / name).read_text(encoding="utf-8")
+             for name in _index_files(notes_root)}
+    assert before
+
+    for name in before:
+        (notes_root / name).unlink()
+    notes.reindex(notes_root)
+
+    for name, text in before.items():
+        assert (notes_root / name).read_text(encoding="utf-8") == text, name
+
+
+def test_an_amendment_quoting_the_original_heading_stays_one_amendment(notes_root):
+    """The same forgery risk applies when a correction quotes the original
+    note back, heading and all."""
+    add("Cutover", date="2026-09-11", body="Rolled back at 09:40.")
+    original = notes.load_notes(notes_root)[0]
+
+    quoted_back = (
+        "Correcting:\n"
+        f"## {original.date.isoformat()} {original.time}  {original.title}\n"
+        "It actually said 09:45."
+    )
+    notes.amend(notes_root, original.citation, quoted_back, period="week",
+               at=date(2026, 9, 12))
+
+    stored = notes.load_notes(notes_root)
+    assert len(stored) == 2  # the original, plus exactly one amendment
+    assert stored[-1].kind == "amendment"
+    assert stored[-1].facets["amends"] == original.citation
+
+
 # --------------------------------------------------------------------- doctor
 
 def test_doctor_reports_sync_conflicts_without_touching_them(notes_root):
@@ -369,11 +428,11 @@ def test_doctor_notices_a_stale_index(notes_root):
 @pytest.fixture
 def notes_beside_a_ledger(ledger_root, monkeypatch):
     """A notes folder inside a real ledger's records folder."""
-    monkeypatch.delenv("NOTES_ROOT", raising=False)
-    assert main(["entity", "add", "--name", "Harjit Singh",
+    monkeypatch.delenv("DAYBOOK_NOTES_ROOT", raising=False)
+    assert main(["entity", "add", "--name", "Robert Diaz",
                  "--aliases", "dad, papa", "--currency", "INR"]) == 0
-    assert main(["entity", "add", "--name", "Dad Sharma",
-                 "--aliases", "sharma", "--currency", "INR"]) == 0
+    assert main(["entity", "add", "--name", "Dan Ortiz",
+                 "--aliases", "ortiz", "--currency", "INR"]) == 0
     assert main(["note", "init", str(ledger_root / "notes"),
                  "--period", "week", "--no-remember"]) == 0
     return ledger_root / "notes"
@@ -386,12 +445,12 @@ def test_notes_default_to_the_daybook_folder_and_expand_aliases(notes_beside_a_l
 
     add("Lunch", date="2026-09-11", who="papa")
     stored = notes.load_notes(notes_beside_a_ledger)[0]
-    assert stored.who == ["Harjit Singh"], "the alias should resolve to the full name"
+    assert stored.who == ["Robert Diaz"], "the alias should resolve to the full name"
 
 
 def test_an_ambiguous_name_stops_rather_than_picking(notes_beside_a_ledger):
     """The ledger's rule, applied to prose: never choose between candidates."""
-    write("add", "--title", "Lunch", "--date", "2026-09-11", "--who", "harjeet",
+    write("add", "--title", "Lunch", "--date", "2026-09-11", "--who", "robet",
           "--no-commit", expect=1)
     assert notes.load_notes(notes_beside_a_ledger) == []
 

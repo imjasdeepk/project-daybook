@@ -57,15 +57,19 @@ def git_repo_for(path: Path) -> Path | None:
     return None
 
 
-def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
+def git_commit(root: Path, message: str, files: list[Path]) -> dict:
     """Commit the given files into whichever repository actually holds them.
 
-    Returns None when there is no repository, which is the ordinary case for
-    records kept in a Drive or Dropbox folder. That is not an error.
+    `status` is one of `no_repository` (the ordinary case for records kept in
+    a Drive or Dropbox folder -- not an error), `nothing_to_commit`,
+    `committed`, or `failed`. Distinguishing `failed` from the other two
+    matters: someone who chose `--git` backup and has, say, no `user.email`
+    configured must be told their records were not versioned, not left to
+    assume they were.
     """
     repo = git_repo_for(files[0].parent) if files else git_repo_for(root)
     if repo is None:
-        return None
+        return {"status": "no_repository"}
     root = repo
     try:
         subprocess.run(
@@ -77,7 +81,7 @@ def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
             cwd=root, check=True, capture_output=True, text=True,
         )
         if not status.stdout.strip():
-            return None
+            return {"status": "nothing_to_commit"}
         subprocess.run(
             ["git", "commit", "-m", message],
             cwd=root, check=True, capture_output=True, text=True,
@@ -86,9 +90,10 @@ def git_commit(root: Path, message: str, files: list[Path]) -> str | None:
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=root, check=True, capture_output=True, text=True,
         )
-        return out.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+        return {"status": "committed", "sha": out.stdout.strip()}
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        detail = exc.stderr.strip()[:400] if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+        return {"status": "failed", "detail": detail}
 
 
 class Snapshot:
@@ -163,6 +168,20 @@ def git_sync(path: Path) -> dict:
                     "detail": "Pull failed. Resolve it by hand before syncing again."}
     return {"status": "synced" if all(s["ok"] for s in steps) else "failed",
             "repository": str(repo), "remote": remote, "steps": steps}
+
+
+def commit_field(commit: dict | None) -> str | dict | None:
+    """The value a command's `commit` field should carry, from a `git_commit`
+    result: the sha on success, the whole result (with `detail`) on a real
+    failure, and nothing otherwise. No repository, or nothing to commit, are
+    both ordinary states and stay silent, exactly as a bare sha or None did
+    before -- only `failed` needs to stop being invisible.
+    """
+    if commit is None or commit["status"] in ("no_repository", "nothing_to_commit"):
+        return None
+    if commit["status"] == "committed":
+        return commit["sha"]
+    return commit
 
 
 def today() -> date:

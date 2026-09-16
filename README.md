@@ -30,9 +30,9 @@ cites the file and line it came from.
 - **Nothing exists until you record it.** Interest you were actually paid is a
   transaction. Interest that has merely accrued is shown separately, labelled a
   projection, with its formula printed next to it.
-- **Names are resolved, not guessed.** "dad", "papa" and "Harjit Singh" map to one
+- **Names are resolved, not guessed.** "dad", "papa" and "Robert Diaz" map to one
   record. A name that is close but not exact stops and asks you rather than picking.
-- **Not everything owed is a loan.** "Nikhil owes me $306 from a trip" is recorded
+- **Not everything owed is a loan.** "Jordan owes me $306 from a trip" is recorded
   immediately as an IOU — a debt with no interest terms — and it is counted in every
   balance and total exactly like a loan is. It is never shown as a 0% loan, because
   nobody agreed 0%; nobody agreed anything. If it turns out to earn interest, the
@@ -54,11 +54,9 @@ skills.** No server, no daemon, nothing to authenticate against, no database —
 agent can only do what you could type yourself, so every action it takes is one you
 can reproduce and check by hand.
 
-**The binary.** `daybook` and `ledger` are the same program (the second name is kept
-so an install made before this project was renamed keeps working). Every command
-takes `--json`, placed *before* the subcommand, for structured output; drop it for a
-readable one. The same command serves the agent mid-conversation and you at a
-terminal.
+**The binary.** `daybook` is the one command. Every command takes `--json`, placed
+*before* the subcommand, for structured output; drop it for a readable one. The same
+command serves the agent mid-conversation and you at a terminal.
 
 **Commands that capture something:**
 
@@ -136,12 +134,16 @@ The installer needs [git](https://git-scm.com/downloads) and offers to install
 [uv](https://docs.astral.sh/uv/), which brings its own Python. It is safe to run
 again later; an existing ledger is left alone.
 
-To skip the questions, answer them up front:
+The first question is what you want to keep — a **diary**, a **ledger**, or **both**
+(the default). Diary-only skips every money question entirely and never touches
+Beancount. To skip the questions, answer them up front:
 
 ```bash
-DAYBOOK_DIR=~/Documents/daybook DAYBOOK_CURRENCIES=INR,USD DAYBOOK_BACKUP=git \
-  bash install.sh
+DAYBOOK_KEEP=both DAYBOOK_DIR=~/Documents/daybook DAYBOOK_CURRENCIES=INR,USD \
+  DAYBOOK_BACKUP=git bash install.sh
 ```
+
+`DAYBOOK_KEEP=diary` for a diary with no ledger at all.
 
 <details>
 <summary>Or install by hand</summary>
@@ -151,6 +153,7 @@ git clone https://github.com/imjasdeepk/project-daybook.git
 cd project-daybook
 uv sync
 uv run daybook init ~/Documents/daybook --currencies INR,USD --title "My Ledger"
+uv tool install --force .   # puts `daybook` on your PATH; optional but recommended
 ```
 
 </details>
@@ -162,21 +165,25 @@ repository. See [Your records stay private](#your-records-stay-private).
 On Windows use PowerShell and the same commands. `uv` installs the right Python for
 you, so nothing depends on what is already on your machine.
 
-Then open the folder in Claude Code. The skill in `.claude/skills/ledger/` loads
-automatically and you can start talking to it.
+The installer puts `daybook` on your `PATH` (via `uv tool install`), so `daybook
+--version` works from any folder afterwards. If your shell was already open when
+it ran, open a new terminal, or follow the `export PATH=...` line it prints.
+
+Then open the folder in Claude Code. The skill in `.claude/skills/ledger/` (and/or
+`.claude/skills/notes/`) loads automatically and you can start talking to it.
 
 ## Using it in conversation
 
 ```
 you>  lent dad 5000 rupees for the car last tuesday
 
-Claude runs: ledger resolve "dad"          -> Harjit Singh
-             ledger date "last tuesday"    -> 2026-09-01
+Claude runs: daybook resolve "dad"          -> Robert Diaz
+             daybook date "last tuesday"    -> 2026-09-01
              (shows you the entry, then writes it)
 
 you>  how much does dad owe me?
 
-Claude runs: ledger balance "dad"
+Claude runs: daybook balance "dad"
              -> owed to you: 5000 INR, lent 1 time, cites 2026.beancount:12
 ```
 
@@ -188,58 +195,58 @@ and quotes the line number of every number it reports back.
 The same commands work on their own, without Claude:
 
 ```bash
-uv run daybook entity add --name "Jasdeep Katariya" --aliases me --book --self \
+daybook entity add --name "Alex Rivera" --aliases me --book --self \
     --currency INR
 
-uv run daybook entity add --name "Harjit Singh" --relation father \
+daybook entity add --name "Robert Diaz" --relation father \
     --aliases "dad, papa" --currency INR
 
-uv run daybook contract add --lender me --borrower dad --rate 8 --method simple \
+daybook contract add --lender me --borrower dad --rate 8 --method simple \
     --started 2026-09-01
 
-uv run daybook add --kind lend --who dad --amount 5000 --date 2026-09-01 \
+daybook add --kind lend --who dad --amount 5000 --date 2026-09-01 \
     --note "for the car" --source "lent dad 5k for the car last tuesday"
 
-uv run daybook balance dad
-uv run daybook statement dad
-uv run daybook projection dad --as-of 2027-09-01
-uv run daybook event add --summary "Dad's birthday" --date "14 March 1958"
-uv run daybook upcoming --days 365
-uv run daybook check
-uv run daybook sync
+daybook balance dad
+daybook statement dad
+daybook projection dad --as-of 2027-09-01
+daybook event add --summary "Dad's birthday" --date "14 March 1962"
+daybook upcoming --days 365
+daybook check
+daybook sync
 ```
 
 A debt with no agreed rate needs none of that — leave `contract add` out entirely and
 `daybook add` opens an IOU on the spot:
 
 ```bash
-uv run daybook entity add --name Nikhil --aliases nikhil --currency USD
-uv run daybook add --kind lend --who nikhil --amount 306 --date 2025-07-01 \
+daybook entity add --name Jordan --aliases jordan --currency USD
+daybook add --kind lend --who jordan --amount 306 --date 2025-07-01 \
     --note "Phuket trip"
 # -> recorded as an IOU with no interest terms; it still counts in balance/portfolio
 
 # if it later turns out to earn interest, give the same record terms:
-uv run daybook contract terms 2025-07-01-iou --rate 12 --method simple
+daybook contract terms 2025-07-01-iou --rate 12 --method simple
 ```
 
 And for notes:
 
 ```bash
-uv run daybook note add --title "Ingest pipeline cutover" --kind log \
+daybook note add --title "Ingest pipeline cutover" --kind log \
     --who "Alice Chen, Ravi" --tags "infra, oncall" \
     --body "Cut over at 09:02. Rollback plan was the old consumer group."
 
-uv run daybook note add --title "Tokyo trip booked" --kind travel \
+daybook note add --title "Tokyo trip booked" --kind travel \
     --when "2026-10-03..2026-10-09" --tags travel
 
-uv run daybook note find "rollback"       # cites 2026/2026-W37.md:5
-uv run daybook note topic infra           # everything filed under one tag
-uv run daybook note week                  # what happened this week
-uv run daybook note agenda --days 30      # notes about a date coming up
-uv run daybook note reindex
+daybook note find "rollback"       # cites 2026/2026-W37.md:5
+daybook note topic infra           # everything filed under one tag
+daybook note week                  # what happened this week
+daybook note agenda --days 30      # notes about a date coming up
+daybook note reindex
 ```
 
-Run `uv run daybook --help` for the full list. Add `--json` to any command for
+Run `daybook --help` for the full list. Add `--json` to any command for
 machine-readable output.
 
 ## How notes are filed
@@ -316,17 +323,13 @@ load your shell profile. `DAYBOOK_ROOT` in the environment does the same job and
 wins when both are set. To move your records later, move the folder and update
 that one file.
 
-The project was called `project-ledger` until prose records joined the money ones.
-`LEDGER_ROOT` and `.ledger-root` are still read, and the `ledger` command still works,
-so an install made before the rename keeps working untouched.
-
 ### Backing them up is your choice
 
 **A synced folder.** Put your records folder inside Google Drive, Dropbox or
 iCloud and let it sync. Nothing else to do, and no git involved.
 
 ```bash
-uv run daybook init ~/"Google Drive/My Drive/ledger" --currencies USD
+daybook init ~/"Google Drive/My Drive/ledger" --currencies USD
 ```
 
 **A private git repository.** Add `--git` and your records become a repository
@@ -334,12 +337,12 @@ of their own. Each entry is then committed as you record it, giving you a dated
 history of every change.
 
 ```bash
-uv run daybook init ~/Documents/daybook --currencies USD --git
+daybook init ~/Documents/daybook --currencies USD --git
 cd ~/Documents/ledger
 gh repo create <you>/my-ledger --private --source . --remote origin --push
 ```
 
-After that, `uv run daybook sync` pulls and pushes your records when you move
+After that, `daybook sync` pulls and pushes your records when you move
 between machines. Keep that repository **private**. This one can be public
 without ever exposing it, because your records are not inside it.
 
@@ -364,7 +367,7 @@ can see later what a number was based on.
 The ledger is text in a git repository, so it goes wherever the repository goes. With
 your records in their own private repository, open both with Claude Code on the web
 from your phone and the skill, the commands and the guardrails travel with them. Run
-`ledger sync` before and after so your machines agree.
+`daybook sync` before and after so your machines agree.
 
 Subscribe your phone calendar to `dates.ics` for birthday and anniversary
 notifications, which then arrive with nothing running anywhere.
@@ -374,9 +377,16 @@ notifications, which then arrive with nothing running anywhere.
 ```bash
 uv sync --extra dev
 uv run pytest
+uv run ruff check .
 ```
 
-Tests run on macOS, Windows and Linux in CI.
+Tests run on macOS, Windows and Linux in CI. If you moved or renamed this checkout,
+`.venv` still points at the old path and `uv sync` alone will not repair it — run
+`uv sync --extra dev --reinstall`, or delete `.venv` and sync again.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules a change here has to keep, and
+[CHANGELOG.md](CHANGELOG.md) for what has shipped. [SECURITY.md](SECURITY.md) covers
+the threat model and how to report a vulnerability.
 
 ## Licence
 

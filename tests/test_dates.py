@@ -19,8 +19,8 @@ TUESDAY = date(2026, 9, 8)
     ("10 days ago", "2026-08-29"),
     ("6 months ago", "2026-03-08"),
     ("2 years ago", "2024-09-08"),
-    ("14 March 1958", "1958-03-14"),
-    ("14th of march 1958", "1958-03-14"),
+    ("14 March 1980", "1980-03-14"),
+    ("14th of march 1980", "1980-03-14"),
     ("march 14", "2026-03-14"),
 ])
 def test_resolves(phrase, expected):

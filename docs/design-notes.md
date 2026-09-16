@@ -1,8 +1,17 @@
+> **This is the original pre-implementation design doc**, kept for the reasoning
+> behind decisions that still hold (Beancount for storage, no currency conversion,
+> the interest-is-a-projection rule, the git-audit-trail idea). It does **not**
+> describe the current layout: `scripts/projection.py` was folded into
+> `daybook_tools/interest.py`, `Assets:Loans:RobertDiaz` became the contract model
+> in `daybook_tools/contracts.py`, and the tool has grown notes, IOUs, and a
+> Claude Code skill pair that this document predates. See `README.md` and
+> `CLAUDE.md` for what actually exists.
+
 # Personal Ledger: open-source Claude Code skill on top of Beancount, Fava and remind
 
 ## Context
 
-You want a personal ledger you can talk to: capture loans, repayments, interest, purchases, birthdays and anniversaries, then ask "how much does Dad owe as of today", "how many times have I lent to X", "whose birthdays fall in the next year". Hard requirements: no wrong facts, every answer citable to a human-readable record, dedup of names ("dad" vs "Harjit Singh") with a question when unclear. Decisions: multiple currencies never silently converted; each loan carries a rate and simple/compound method; nothing exists unless captured; start fresh; **open source, built on existing tools rather than a new product; portable to macOS and Windows with a simple install**.
+You want a personal ledger you can talk to: capture loans, repayments, interest, purchases, birthdays and anniversaries, then ask "how much does Dad owe as of today", "how many times have I lent to X", "whose birthdays fall in the next year". Hard requirements: no wrong facts, every answer citable to a human-readable record, dedup of names ("dad" vs "Robert Diaz") with a question when unclear. Decisions: multiple currencies never silently converted; each loan carries a rate and simple/compound method; nothing exists unless captured; start fresh; **open source, built on existing tools rather than a new product; portable to macOS and Windows with a simple install**.
 
 Design: **Claude never does arithmetic or recalls balances from memory.** Established open-source tools own storage, validation, math and dates. The only new code is a Claude Code skill (Markdown) plus two short helper scripts that call the Beancount Python API. The repo is published under MIT so anyone can drop the skill into their own Claude Code.
 
@@ -48,8 +57,8 @@ Install on either OS: install uv (one line from the uv site), then `uv sync`, th
 Entity = an account with metadata. Aliases live on the `open` directive so resolution and the ledger share one file:
 
 ```beancount
-2026-01-01 open Assets:Loans:HarjitSingh  INR,USD
-  name: "Harjit Singh"
+2026-01-01 open Assets:Loans:RobertDiaz  INR,USD
+  name: "Robert Diaz"
   type: "person"
   relation: "father"
   aliases: "dad, papa, father"
@@ -62,15 +71,15 @@ Entity = an account with metadata. Aliases live on the `open` directive so resol
 Transaction = one Beancount entry. Kind is expressed by the accounts, verbatim phrasing is metadata for citation:
 
 ```beancount
-2026-09-08 * "Harjit Singh" "Lent for car repair"
+2026-09-08 * "Robert Diaz" "Lent for car repair"
   source: "2026-09-08 chat: 'lent dad 5k for car repair'"
-  Assets:Loans:HarjitSingh     5000.00 INR
+  Assets:Loans:RobertDiaz     5000.00 INR
   Assets:Cash:INR
 
-2026-10-01 * "Harjit Singh" "Interest received"
+2026-10-01 * "Robert Diaz" "Interest received"
   source: "..."
   Assets:Cash:INR               100.00 INR
-  Income:Interest:HarjitSingh
+  Income:Interest:RobertDiaz
 ```
 
 Account conventions: `Assets:Loans:<Person>` (money owed to you), `Liabilities:Owed:<Person>` (money you owe), `Income:Interest:<Person>`, `Expenses:<Category>`, `Assets:Cash:<CCY>`. Places and things are payees or `Expenses:` subaccounts with the same metadata scheme.
@@ -79,11 +88,11 @@ Events in `dates.ics` (standard iCalendar; the UID is the citation, the descript
 
 ```
 BEGIN:VEVENT
-UID:birthday-harjit-singh
-SUMMARY:Harjit Singh (dad) birthday
-DTSTART;VALUE=DATE:19580314
+UID:birthday-robert-diaz
+SUMMARY:Robert Diaz (dad) birthday
+DTSTART;VALUE=DATE:19620314
 RRULE:FREQ=YEARLY
-DESCRIPTION:source 2026-09-08 chat: "dad's birthday is 14 March 1958"
+DESCRIPTION:source 2026-09-08 chat: "dad's birthday is 14 March 1962"
 END:VEVENT
 ```
 
@@ -95,10 +104,10 @@ All commands are `uv run ...` so they behave identically on macOS and Windows.
 
 - Resolve name: `uv run scripts/resolve.py "dad"` → `{status: resolved|ambiguous|unknown, candidates}`. Exact alias/name match resolves; difflib matches above a threshold are `ambiguous`; else `unknown`.
 - Validate: `uv run bean-check ledger/main.beancount` after every write. A failed check is reverted (git checkout) and reported.
-- Balance as of today: `uv run bean-query ledger/main.beancount "SELECT account, sum(position) WHERE account ~ 'HarjitSingh' AND date <= today()"`.
-- Counts: `SELECT count(*) WHERE account = 'Assets:Loans:HarjitSingh' AND number > 0` (lent), `number < 0` (repaid), `account ~ 'Income:Interest:HarjitSingh'` (interest received).
-- Statement with citations: `SELECT date, narration, position, balance, filename, lineno WHERE account ~ 'HarjitSingh'`. `filename:lineno` is the citation.
-- Projection: `uv run scripts/projection.py Assets:Loans:HarjitSingh --as-of 2026-12-31` → prints inputs, formula, result, header `PROJECTION — not recorded, not owed`.
+- Balance as of today: `uv run bean-query ledger/main.beancount "SELECT account, sum(position) WHERE account ~ 'RobertDiaz' AND date <= today()"`.
+- Counts: `SELECT count(*) WHERE account = 'Assets:Loans:RobertDiaz' AND number > 0` (lent), `number < 0` (repaid), `account ~ 'Income:Interest:RobertDiaz'` (interest received).
+- Statement with citations: `SELECT date, narration, position, balance, filename, lineno WHERE account ~ 'RobertDiaz'`. `filename:lineno` is the citation.
+- Projection: `uv run scripts/projection.py Assets:Loans:RobertDiaz --as-of 2026-12-31` → prints inputs, formula, result, header `PROJECTION — not recorded, not owed`.
 - Upcoming events: `uv run scripts/upcoming.py --days 365` (every occurrence in the window, with days-until) and `uv run scripts/upcoming.py --on 2027-09-08` for "on this date". Recurrence expansion is done by `recurring-ical-events`, not by hand.
 - Search: `SELECT date, narration, meta('source') WHERE narration ~ 'car' OR any_meta('source') ~ 'car'`.
 - Duplicate check before a write: BQL for same account, same amount, date within ±3 days. If a row comes back, show it and ask.
@@ -137,11 +146,11 @@ Nothing in the design assumes a laptop: no local database, no daemon, no OS-spec
 ## Verification (end-to-end)
 
 1. `uv run pytest` green locally and on both CI runners; `uv run bean-check ledger/main.beancount` clean.
-2. Scripted scenario: open `Assets:Loans:HarjitSingh` (aliases dad/papa, 8% simple); lend 5000 INR twice and 200 USD once; repay 2000 INR; record 100 INR interest. Then confirm:
+2. Scripted scenario: open `Assets:Loans:RobertDiaz` (aliases dad/papa, 8% simple); lend 5000 INR twice and 200 USD once; repay 2000 INR; record 100 INR interest. Then confirm:
    - balance query → INR 8000 and USD 200 as separate rows, never summed; counts lent 3, repaid 1, interest 1; each row cites `2026.beancount:<line>`.
    - projection script → labelled projection with formula and inputs matching a hand calculation.
-   - `resolve.py papa` resolved; `resolve.py harjeet` ambiguous with candidate; `resolve.py ravi` unknown.
+   - `resolve.py papa` resolved; `resolve.py robet` ambiguous with candidate; `resolve.py ravi` unknown.
    - Appending the same lend again trips the duplicate query.
-   - Birthday 14 Mar 1958 added to `dates.ics`; `upcoming.py --on 2027-03-14` and `--days 365` both return it with the UID; the file opens cleanly in Apple Calendar or Outlook.
-   - Open Fava, click the Harjit Singh account, confirm every row links to the source line.
+   - Birthday 14 Mar 1962 added to `dates.ics`; `upcoming.py --on 2027-03-14` and `--days 365` both return it with the UID; the file opens cleanly in Apple Calendar or Outlook.
+   - Open Fava, click the Robert Diaz account, confirm every row links to the source line.
 3. Conversational check in Claude Code with the skill: "lent dad 5k for the car last tuesday" → Claude resolves, states the absolute date, shows the entry to be written, appends, `bean-check`, commits, echoes the stored entry. "How much does dad owe today?" → the answer contains only query output and citations.

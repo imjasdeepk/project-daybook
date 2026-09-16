@@ -33,8 +33,11 @@ both.
 
 ## Commands
 
-Run everything with `daybook --json note ...`. **`--json` goes before `note`.** Drop it
-when showing the user something readable.
+Run everything with `daybook --json note ...`. After install, `daybook` is on PATH
+and works from any folder. If it somehow is not, a `.daybook-tool` file next to your
+records names where the tool lives — run
+`uv run --project "$(cat .daybook-tool)" daybook --json note ...` instead.
+**`--json` goes before `note`.** Drop it when showing the user something readable.
 
 | Need | Command |
 |---|---|
@@ -152,7 +155,7 @@ you:  [daybook note find "rollback"] -> 2026/2026-W37.md:5
 ```
 user: lent dad 5k at lunch, he's thinking about selling the shop
 you:  [ledger skill: daybook add --kind lend --who dad --amount 5000 ...]
-      [daybook note add --title "Lunch with dad - may sell the shop" --who "Harjit Singh"
+      [daybook note add --title "Lunch with dad - may sell the shop" --who "Robert Diaz"
         --tags family --body "He is thinking about selling the shop."
         --source "lent dad 5k at lunch, he's thinking about selling the shop"]
       "Recorded the 5,000 INR at 2026.beancount:12, and the conversation at

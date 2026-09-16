@@ -17,7 +17,7 @@ from datetime import date
 from decimal import Decimal, getcontext
 from pathlib import Path
 
-from .contracts import Contract, DAY_COUNT_BASIS, PERIODS_PER_YEAR
+from .contracts import DAY_COUNT_BASIS, PERIODS_PER_YEAR, Contract
 from .entities import Entity
 from .store import DaybookError, cite, transactions
 
@@ -55,7 +55,7 @@ def _accrue(events: list[tuple[date, Decimal, str]], *, rate: Decimal, method: s
     cursor = events[0][0]
     segments = []
     stream = [*events, (as_of, Decimal(0), "")]
-    for when, change, citation in stream:
+    for when, change, _citation in stream:
         days = (when - cursor).days
         if days > 0 and principal > 0:
             years = Decimal(days) / Decimal(basis)

@@ -15,7 +15,7 @@ from icalendar import Calendar, Event
 
 from .store import DaybookError
 
-PRODID = "-//project-ledger//EN"
+PRODID = "-//project-daybook//EN"
 
 
 def empty_calendar() -> Calendar:

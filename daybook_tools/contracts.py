@@ -23,8 +23,16 @@ from beancount.core import account as beancount_account
 
 from .entities import Entity, book_owners
 from .store import (
-    CASH_ROOT, EXPENSE_INTEREST_ROOT, INTEREST_ROOT, LOANS_ROOT, OWED_ROOT,
-    DaybookError, Paths, append_block, cite, opens,
+    CASH_ROOT,
+    EXPENSE_INTEREST_ROOT,
+    INTEREST_ROOT,
+    LOANS_ROOT,
+    OWED_ROOT,
+    DaybookError,
+    Paths,
+    append_block,
+    cite,
+    opens,
 )
 
 PERIODS_PER_YEAR = {

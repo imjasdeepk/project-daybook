@@ -37,7 +37,7 @@ def _entity(paths: Paths, name: str):
 def _add_dad(run, **overrides):
     """A book owner ('me'), a borrower ('dad'), and a contract between them."""
     _add_me(run)
-    run("entity", "add", "--name", "Harjit Singh", "--relation", "father",
+    run("entity", "add", "--name", "Robert Diaz", "--relation", "father",
         "--aliases", "dad, papa", "--currency", "INR")
     terms = {"--rate": "8", "--method": "simple", "--started": "2026-01-01"}
     terms.update(overrides)
@@ -50,16 +50,16 @@ def _add_dad(run, **overrides):
 def test_alias_resolves_to_one_person(paths, run):
     _add_dad(run)
     _, entities, _ = _load_all(paths)
-    for alias in ("dad", "papa", "Harjit Singh", "HARJIT SINGH"):
+    for alias in ("dad", "papa", "Robert Diaz", "ROBERT DIAZ"):
         assert resolve(alias, entities)["status"] == "resolved", alias
 
 
 def test_near_miss_asks_instead_of_guessing(paths, run):
     _add_dad(run)
     _, entities, _ = _load_all(paths)
-    result = resolve("harjeet", entities)
+    result = resolve("robet", entities)
     assert result["status"] == "ambiguous"
-    assert result["candidates"][0]["name"] == "Harjit Singh"
+    assert result["candidates"][0]["name"] == "Robert Diaz"
 
 
 def test_unknown_name_is_unknown(paths, run):
@@ -75,9 +75,9 @@ def test_duplicate_alias_is_refused(paths, run):
 
 def test_alias_can_be_added_later(paths, run):
     _add_dad(run)
-    run("entity", "alias", "Harjit Singh", "--add", "pitaji")
+    run("entity", "alias", "Robert Diaz", "--add", "pops")
     _, entities, _ = _load_all(paths)
-    assert resolve("pitaji", entities)["status"] == "resolved"
+    assert resolve("pops", entities)["status"] == "resolved"
 
 
 # --------------------------------------------------------------------- balances
@@ -363,6 +363,18 @@ def test_ledger_stays_valid_after_writes(paths, run):
     run("check")
 
 
+def test_a_quote_in_a_note_or_source_does_not_break_the_entry(paths, run):
+    """Beancount string literals cannot contain `"`. A user who types one
+    (quoting what somebody said, say) must not get a parse error for it."""
+    _add_dad(run)
+    run("add", "--kind", "lend", "--who", "dad", "--amount", "50", "--date", "2026-09-01",
+        "--note", 'the "new" car', "--source", 'he said "just this once"')
+    run("check")  # would fail to parse if the quotes were not escaped
+    text = (paths.ledger_dir / "2026.beancount").read_text(encoding="utf-8")
+    assert "the 'new' car" in text
+    assert 'source: "he said \'just this once\'"' in text
+
+
 # ------------------------------------------------------ keeping records private
 
 def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
@@ -373,7 +385,7 @@ def test_records_can_live_in_their_own_folder(tmp_path, monkeypatch):
 
     data = tmp_path / "private-records"
     data.mkdir()
-    monkeypatch.setenv("LEDGER_ROOT", str(data))
+    monkeypatch.setenv("DAYBOOK_ROOT", str(data))
     monkeypatch.chdir(tmp_path)
     assert main(["init", str(data), "--currencies", "INR", "--no-remember"]) == 0
 
@@ -393,7 +405,7 @@ def test_ledger_subfolder_layout_still_works(tmp_path, monkeypatch):
     home = tmp_path / "project"
     home.mkdir()
     monkeypatch.chdir(home)
-    monkeypatch.setenv("LEDGER_ROOT", str(home))
+    monkeypatch.setenv("DAYBOOK_ROOT", str(home))
     assert main(["init", "--currencies", "INR"]) == 0
     assert (home / "ledger" / "main.beancount").exists()
     assert Paths(home).ledger_dir == home / "ledger"
@@ -401,7 +413,7 @@ def test_ledger_subfolder_layout_still_works(tmp_path, monkeypatch):
 
 
 def test_init_remembers_where_the_records_went(tmp_path, monkeypatch):
-    """Naming a folder elsewhere leaves a .ledger-root pointer behind."""
+    """Naming a folder elsewhere leaves a .daybook-root pointer behind."""
     from daybook_tools.cli import main
     from daybook_tools.store import LOCATION_FILENAME, project_root
 
@@ -409,7 +421,7 @@ def test_init_remembers_where_the_records_went(tmp_path, monkeypatch):
     code.mkdir()
     records = tmp_path / "elsewhere" / "ledger"
     monkeypatch.chdir(code)
-    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
     assert main(["init", str(records), "--currencies", "INR"]) == 0
     assert (code / LOCATION_FILENAME).read_text().strip() == str(records)
     assert project_root() == records
@@ -421,7 +433,7 @@ def test_init_can_make_the_records_a_git_repository(tmp_path, monkeypatch):
 
     records = tmp_path / "records"
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("LEDGER_ROOT", raising=False)
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
     assert main(["init", str(records), "--currencies", "INR", "--git", "--no-remember"]) == 0
     assert (records / ".git").exists()
     assert git_repo_for(records) == records
@@ -435,7 +447,7 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
     from daybook_tools.store import Paths, git_repo_for
 
     records = tmp_path / "records"
-    monkeypatch.setenv("LEDGER_ROOT", str(records))
+    monkeypatch.setenv("DAYBOOK_ROOT", str(records))
     monkeypatch.chdir(tmp_path)
     assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
     paths = Paths(records)
@@ -471,26 +483,47 @@ def test_writes_commit_to_the_repository_holding_the_records(tmp_path, monkeypat
     assert count(tmp_path) == 1, "the code repository must not receive record commits"
 
 
-def test_location_file_points_at_records_elsewhere(tmp_path, monkeypatch):
-    """A .ledger-root file lets the code folder and the records live apart,
-    without relying on an environment variable a session may not inherit."""
+def test_a_failed_commit_is_reported_not_silently_dropped(tmp_path, monkeypatch):
+    """`no repository` and `nothing to commit` are ordinary and stay quiet, but
+    a commit that actually fails must say so -- someone who chose --git backup
+    has to know their records were not versioned, not be left to assume they
+    were. A failing pre-commit hook forces a real, portable git failure --
+    unlike missing identity, which recent git versions auto-derive instead of
+    refusing."""
+    import stat
+
     from daybook_tools.cli import main
-    from daybook_tools.store import project_root
 
-    records = tmp_path / "Documents" / "ledger"
-    records.mkdir(parents=True)
-    code = tmp_path / "code"
-    code.mkdir()
+    records = tmp_path / "records"
+    monkeypatch.setenv("DAYBOOK_ROOT", str(records))
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", str(records), "--currencies", "INR", "--git", "--no-remember"]) == 0
 
-    monkeypatch.setenv("LEDGER_ROOT", str(records))
-    assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
-    monkeypatch.delenv("LEDGER_ROOT")
+    hook = records / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC)
 
-    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
-    (code / ".ledger-root").write_text(str(records), encoding="utf-8")
-    monkeypatch.chdir(code)
-    assert project_root() == records.resolve()
-    assert main(["check"]) == 0
+    main(["entity", "add", "--name", "Me", "--aliases", "me", "--currency", "INR",
+          "--book", "--self"])
+    main(["entity", "add", "--name", "Someone", "--aliases", "them", "--currency", "INR"])
+    main(["contract", "add", "--lender", "me", "--borrower", "them", "--rate", "0",
+          "--started", "2026-09-01"])
+    from daybook_tools.capture import commit_entry, plan_entry
+    from daybook_tools.contracts import load_contracts
+    from daybook_tools.entities import load_entities
+    from daybook_tools.store import Paths, load
+
+    p = Paths(records)
+    entries, _ = load(p)
+    entities = load_entities(entries, p.root)
+    contracts, _ = load_contracts(entries, entities, p.root)
+    contract = contracts[0]
+    plan = plan_entry("principal", contract=contract, amount=Decimal(10), currency="INR",
+                      when=date(2026, 9, 1), narration="a loan", source="")
+    result = commit_entry(p, plan)
+    assert isinstance(result["commit"], dict), result["commit"]
+    assert result["commit"]["status"] == "failed"
+    assert "detail" in result["commit"]
 
 
 def test_location_file_naming_a_missing_folder_says_so(tmp_path, monkeypatch):
@@ -498,15 +531,14 @@ def test_location_file_naming_a_missing_folder_says_so(tmp_path, monkeypatch):
 
     code = tmp_path / "code"
     code.mkdir()
-    (code / ".ledger-root").write_text(str(tmp_path / "nowhere"), encoding="utf-8")
+    (code / ".daybook-root").write_text(str(tmp_path / "nowhere"), encoding="utf-8")
     monkeypatch.chdir(code)
-    monkeypatch.delenv("LEDGER_ROOT", raising=False)
     monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
     with pytest.raises(DaybookError, match="no main.beancount was found"):
         project_root()
 
 
-# --------------------------------------------------------------- the rename
+# ------------------------------------------------ no ledger-named CLI surface
 
 def _init_records(tmp_path, monkeypatch):
     """An initialised records folder, with no root variable left set."""
@@ -517,33 +549,10 @@ def _init_records(tmp_path, monkeypatch):
     monkeypatch.setenv("DAYBOOK_ROOT", str(records))
     assert main(["init", str(records), "--currencies", "INR", "--no-remember"]) == 0
     monkeypatch.delenv("DAYBOOK_ROOT")
-    monkeypatch.delenv("LEDGER_ROOT", raising=False)
     return records
 
 
-def test_legacy_ledger_root_env_var_still_finds_the_records(tmp_path, monkeypatch):
-    """The project was renamed after people had already installed it. LEDGER_ROOT
-    names where somebody's real records live; dropping it would orphan them."""
-    from daybook_tools.store import project_root
-
-    records = _init_records(tmp_path, monkeypatch)
-    monkeypatch.setenv("LEDGER_ROOT", str(records))
-    assert project_root() == records.resolve()
-
-
-def test_legacy_ledger_root_pointer_file_still_finds_the_records(tmp_path, monkeypatch):
-    """Same promise for the pointer file, which is the form most installs use."""
-    from daybook_tools.store import project_root
-
-    records = _init_records(tmp_path, monkeypatch)
-    code = tmp_path / "code"
-    code.mkdir()
-    (code / ".ledger-root").write_text(str(records), encoding="utf-8")
-    monkeypatch.chdir(code)
-    assert project_root() == records.resolve()
-
-
-def test_daybook_root_pointer_file_is_the_new_spelling(tmp_path, monkeypatch):
+def test_daybook_root_pointer_file_is_the_only_spelling(tmp_path, monkeypatch):
     from daybook_tools.store import LOCATION_FILENAME, project_root
 
     assert LOCATION_FILENAME == ".daybook-root"
@@ -555,34 +564,86 @@ def test_daybook_root_pointer_file_is_the_new_spelling(tmp_path, monkeypatch):
     assert project_root() == records.resolve()
 
 
-def test_daybook_root_wins_when_both_variables_are_set(tmp_path, monkeypatch):
-    """Pin the precedence, so a stale LEDGER_ROOT cannot quietly shadow a
-    deliberate DAYBOOK_ROOT."""
-    from daybook_tools.cli import main
-    from daybook_tools.store import project_root
+def test_ledger_root_and_dot_ledger_root_are_no_longer_read(tmp_path, monkeypatch):
+    """This has never been rolled out, so there is no pre-rename install to
+    protect -- LEDGER_ROOT and .ledger-root are ordinary, unrecognised names
+    now, not a back-compat surface. A stray one from an old checkout must not
+    silently resurrect a folder nothing else points at."""
+    from daybook_tools.store import DaybookError, project_root
 
-    new = _init_records(tmp_path, monkeypatch)
-    old = tmp_path / "old-records"
-    old.mkdir()
-    monkeypatch.setenv("DAYBOOK_ROOT", str(old))
-    assert main(["init", str(old), "--currencies", "INR", "--no-remember"]) == 0
+    records = _init_records(tmp_path, monkeypatch)
+    code = tmp_path / "code"
+    code.mkdir()
+    monkeypatch.chdir(code)
 
-    monkeypatch.setenv("DAYBOOK_ROOT", str(new))
-    monkeypatch.setenv("LEDGER_ROOT", str(old))
-    assert project_root() == new.resolve()
+    monkeypatch.setenv("LEDGER_ROOT", str(records))
+    with pytest.raises(DaybookError, match="No ledger found"):
+        project_root()
+    monkeypatch.delenv("LEDGER_ROOT")
+
+    (code / ".ledger-root").write_text(str(records), encoding="utf-8")
+    with pytest.raises(DaybookError, match="No ledger found"):
+        project_root()
 
 
-def test_both_console_scripts_point_at_the_same_entry_point():
-    """`ledger` stays registered alongside `daybook` so existing installs and
-    muscle memory keep working."""
+def test_only_daybook_is_a_registered_console_script():
+    """No `ledger` alias: this has not shipped to anyone, so there is no old
+    binary name or muscle memory to preserve."""
     import tomllib
 
     root = Path(__file__).resolve().parent.parent
     with open(root / "pyproject.toml", "rb") as handle:
         config = tomllib.load(handle)
     scripts = config["project"]["scripts"]
-    assert scripts["daybook"] == "daybook_tools.cli:main"
-    assert scripts["ledger"] == scripts["daybook"]
+    assert scripts == {"daybook": "daybook_tools.cli:main"}
+
+
+def test_version_matches_pyproject(capsys):
+    """Bug reports from strangers need this, and it must not silently drift
+    from what actually ships in pyproject.toml."""
+    import tomllib
+
+    from daybook_tools.cli import main
+
+    root = Path(__file__).resolve().parent.parent
+    with open(root / "pyproject.toml", "rb") as handle:
+        config = tomllib.load(handle)
+    expected = config["project"]["version"]
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--version"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out.strip()
+    assert out == f"daybook {expected}"
+
+
+def test_init_is_refused_inside_the_tool_checkout(tmp_path, monkeypatch, capsys):
+    """Records created under the tool's own folder would ride along with the
+    tool's own storage, and inside a real checkout, `git_repo_for`'s
+    nearest-enclosing walk would commit them straight into the public
+    repository. Refused outright, never silently allowed."""
+    from daybook_tools.cli import main
+
+    tool_root = Path(__file__).resolve().parent.parent
+    inside = tool_root / "some-subfolder-nobody-should-use"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
+    assert main(["init", str(inside), "--currencies", "INR", "--no-remember"]) == 1
+    assert "daybook tool itself lives" in capsys.readouterr().err
+    assert not inside.exists()
+
+
+def test_note_init_is_refused_inside_the_tool_checkout(tmp_path, monkeypatch, capsys):
+    from daybook_tools.cli import main
+
+    tool_root = Path(__file__).resolve().parent.parent
+    inside = tool_root / "some-notes-subfolder-nobody-should-use"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DAYBOOK_ROOT", raising=False)
+    monkeypatch.delenv("DAYBOOK_NOTES_ROOT", raising=False)
+    assert main(["note", "init", str(inside), "--period", "week", "--no-remember"]) == 1
+    assert "daybook tool itself lives" in capsys.readouterr().err
+    assert not inside.exists()
 
 
 # ------------------------------------------- backfilling, and honest rollback

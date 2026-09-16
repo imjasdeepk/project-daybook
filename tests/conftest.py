@@ -14,7 +14,7 @@ def _no_ambient_roots(monkeypatch):
     DAYBOOK_ROOT is a documented way to use the tool, so it is often set in a
     real shell -- and a test that expects no ledger to be findable would then
     find the developer's own."""
-    for name in ("DAYBOOK_ROOT", "LEDGER_ROOT", "NOTES_ROOT"):
+    for name in ("DAYBOOK_ROOT", "DAYBOOK_NOTES_ROOT"):
         monkeypatch.delenv(name, raising=False)
 
 

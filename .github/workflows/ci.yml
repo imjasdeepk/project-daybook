@@ -20,6 +20,8 @@ jobs:
         run: uv sync --extra dev
       - name: Run tests
         run: uv run pytest -q
+      - name: Lint
+        run: uv run ruff check .
 
       - name: Check the shell installer parses
         if: runner.os != 'Windows'
@@ -35,12 +37,13 @@ jobs:
           if ($errors) { $errors | ForEach-Object { $_.Message }; exit 1 }
           Write-Host "install.ps1 parses cleanly"
 
-      - name: Install end to end from this checkout
+      - name: Install end to end (both, macOS/Linux)
         if: runner.os != 'Windows'
         env:
           DAYBOOK_REPO: ${{ github.workspace }}
           DAYBOOK_INSTALL_DIR: ${{ runner.temp }}/installed
           DAYBOOK_DIR: ${{ runner.temp }}/records
+          DAYBOOK_KEEP: both
           DAYBOOK_CURRENCIES: INR,USD
           DAYBOOK_BACKUP: git
           DAYBOOK_GLOBAL_SKILL: "no"
@@ -48,8 +51,60 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
           bash install.sh < /dev/null
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+      - name: daybook is on PATH after install
+        if: runner.os != 'Windows'
+        run: |
+          command -v daybook
+          daybook --version
           cd "$DAYBOOK_INSTALL_DIR"
-          uv run daybook check
-          uv run daybook entity add --name "CI Person" --aliases ci --currency INR
-          uv run daybook add --kind lend --who ci --amount 100 --date 2026-01-01 --note "smoke"
-          uv run daybook balance ci
+          daybook check
+          daybook entity add --name "CI Person" --aliases ci --currency INR
+          daybook add --kind lend --who ci --amount 100 --date 2026-01-01 --note "smoke"
+          daybook balance ci
+        env:
+          DAYBOOK_INSTALL_DIR: ${{ runner.temp }}/installed
+
+      - name: Install end to end (diary only, macOS/Linux)
+        if: runner.os != 'Windows'
+        env:
+          DAYBOOK_REPO: ${{ github.workspace }}
+          DAYBOOK_INSTALL_DIR: ${{ runner.temp }}/installed-diary
+          DAYBOOK_DIR: ${{ runner.temp }}/records-diary
+          DAYBOOK_KEEP: diary
+          DAYBOOK_BACKUP: synced
+          DAYBOOK_GLOBAL_SKILL: "no"
+        run: |
+          bash install.sh < /dev/null
+          cd "$DAYBOOK_INSTALL_DIR"
+          uv run daybook note add --title "CI smoke test" --body "no ledger in this mode"
+          uv run daybook note find "smoke"
+          uv run daybook note reindex
+          uv run daybook note doctor
+          # The headline diary use case: it never touches Beancount.
+          test ! -e "$DAYBOOK_DIR/main.beancount"
+
+      - name: Install end to end (diary only, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DAYBOOK_REPO: ${{ github.workspace }}
+          DAYBOOK_INSTALL_DIR: ${{ runner.temp }}\installed-diary
+          DAYBOOK_DIR: ${{ runner.temp }}\records-diary
+          DAYBOOK_KEEP: diary
+          DAYBOOK_BACKUP: synced
+          DAYBOOK_GLOBAL_SKILL: "no"
+        run: |
+          # Runner accounts are not in Developer Mode, so this also exercises
+          # the symlink-fails -> copy fallback in Install-Skills.
+          .\install.ps1
+          Set-Location $env:DAYBOOK_INSTALL_DIR
+          uv run daybook note add --title "CI smoke test" --body "no ledger in this mode"
+          uv run daybook note find "smoke"
+          uv run daybook note reindex
+          uv run daybook note doctor
+          if (Test-Path (Join-Path $env:DAYBOOK_DIR 'main.beancount')) {
+            Write-Error "diary mode should not have created a ledger"
+            exit 1
+          }

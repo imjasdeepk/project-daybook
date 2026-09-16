@@ -27,11 +27,19 @@ contract, and the interest rate lives on the contract, never on the entity.
 
 ## Commands
 
-Run everything with `daybook --json <command> ...`. The command works from any folder.
-If it is not on the path, run `uv run daybook --json <command> ...` from the project
-folder. **`--json` goes before the subcommand, not after it** — `daybook --json resolve
+Run everything with `daybook --json <command> ...`. After install, `daybook` is on
+PATH and works from any folder. If it somehow is not, a `.daybook-tool` file next to
+your records names where the tool lives — run
+`uv run --project "$(cat .daybook-tool)" daybook --json <command> ...` instead.
+**`--json` goes before the subcommand, not after it** — `daybook --json resolve
 "dad"`, never `daybook resolve "dad" --json`, which is a usage error. Drop `--json` when
 you want to show the user something readable.
+
+**`add`'s `--no-commit` is not a safe dry run.** It skips the git commit step only —
+the entry is still appended to the ledger file. Never use it to "just see" what a
+command would do (e.g. to check which contract it would pick); if you need to inspect
+something before writing, read it with `resolve`, `contract list` or `balance`
+instead, and only run `add` once you're ready to actually record the entry.
 
 | Need | Command |
 |---|---|
@@ -40,7 +48,7 @@ you want to show the user something readable.
 | Today's date | `daybook today` |
 | Create a person, place or thing | `daybook entity add --name "..." --aliases "..."` |
 | Mark someone as a book this ledger keeps | `daybook entity book "<name>" --on` |
-| Add another name for someone | `daybook entity alias "Harjit Singh" --add "pitaji"` |
+| Add another name for someone | `daybook entity alias "Robert Diaz" --add "pops"` |
 | List everyone on record | `daybook entity list` |
 | Create a loan contract | `daybook contract add --lender "..." --borrower "..." --rate <rate> --started "..."` |
 | Give an IOU terms it turned out to have | `daybook contract terms <contract-id> --rate <rate>` |
@@ -79,16 +87,22 @@ silently reinterpreting it.
 ## Capturing something
 
 1. **Resolve the people first.** Run `daybook resolve "<name>"` for the counterparty,
-   and for the lender/borrower if the wording names them explicitly (e.g. "Divya lent
-   Anmol...").
+   and for the lender/borrower if the wording names them explicitly (e.g. "Casey lent
+   Blue Moon...").
    - `resolved` — carry on.
    - `ambiguous` — **stop and ask.** Show the candidates and their citations. Never pick.
    - `unknown` — ask whether to create them. If yes, run `daybook entity add` with the
      spoken name as an alias, so you never have to ask again.
 2. **Pick the contract — or let it be an IOU.** If the person already has exactly one
    contract with the relevant lender/borrower, `daybook add` finds it on its own. If
-   they have **more than one**, the command refuses and lists them with citations;
-   **ask which one, never guess.**
+   they have **more than one under the same book owner**, the command refuses and
+   lists them with citations; ask which one, never guess. **But if the two contracts
+   belong to different book owners** (e.g. one from you, one from a spouse's book),
+   `add` does not refuse — it silently picks one via `--book` (defaulting to
+   `--self`). So run `daybook contract list --borrower "<name>"` yourself whenever a
+   counterparty might have more than one contract, rather than trusting the command
+   to catch it: **ask which one, never guess**, regardless of what the tool does or
+   doesn't enforce.
 
    If they have **none**, do not interrogate them about a rate. **Not everything
    somebody owes you is a loan.** Record it: `daybook add` opens an IOU — a debt with
@@ -167,20 +181,20 @@ rewrite or add to a record, not a transaction, and that is fine.)
 
 ```
 user: lent dad 5k for the car last tuesday
-you:  [daybook resolve "dad"] -> ambiguous: Harjit Singh, Dad Sharma
-      "Two people match 'dad'. Harjit Singh (accounts.beancount:4) or
-       Dad Sharma (accounts.beancount:14)?"
+you:  [daybook resolve "dad"] -> ambiguous: Robert Diaz, Dan Ortiz
+      "Two people match 'dad'. Robert Diaz (accounts.beancount:4) or
+       Dan Ortiz (accounts.beancount:14)?"
 ```
 
 **Normal capture, one contract already on file**
 
 ```
 user: lent dad 5k for the car last tuesday
-you:  [daybook resolve "dad"]      -> Harjit Singh, default INR
+you:  [daybook resolve "dad"]      -> Robert Diaz, default INR
       [daybook date "last tuesday"] -> 2026-09-01
-      "Recording 5,000 INR lent to Harjit Singh on Tuesday 1 September, for the car.
+      "Recording 5,000 INR lent to Robert Diaz on Tuesday 1 September, for the car.
        Writing it now."
-      [daybook add --kind lend --who "Harjit Singh" --amount 5000 --date 2026-09-01
+      [daybook add --kind lend --who "Robert Diaz" --amount 5000 --date 2026-09-01
         --note "for the car" --source "lent dad 5k for the car last tuesday"]
       "Recorded at 2026.beancount:12, against the existing 8% contract."
 ```
@@ -188,10 +202,10 @@ you:  [daybook resolve "dad"]      -> Harjit Singh, default INR
 **A plain IOU — record it, say what you assumed**
 
 ```
-user: nikhil owes me $306 from the phuket trip in 2025
-you:  [daybook resolve "Nikhil"] -> resolved
-      [daybook add --kind lend --who nikhil --amount 306 --date 2025-07-01
-        --note "Phuket trip" --source "nikhil owes me $306 from the phuket trip in 2025"]
+user: jordan owes me $306 from the phuket trip in 2025
+you:  [daybook resolve "Jordan"] -> resolved
+      [daybook add --kind lend --who jordan --amount 306 --date 2025-07-01
+        --note "Phuket trip" --source "jordan owes me $306 from the phuket trip in 2025"]
       -> contract_kind: iou
       "Recorded 306 USD at 2025.beancount:3, as an IOU with no interest terms.
        Say the word if it earns interest and I'll add them."
@@ -200,25 +214,25 @@ you:  [daybook resolve "Nikhil"] -> resolved
 **They said it is a loan — then ask, and assume nothing**
 
 ```
-user: lent anmol jewellers 50 lacs at interest
-you:  [daybook resolve "Anmol Jewellers"] -> resolved, nothing on file with you
+user: lent blue moon jewellers 50 lacs at interest
+you:  [daybook resolve "Blue Moon Jewellers"] -> resolved, nothing on file with you
       "You said at interest — what's the rate, and is it simple or compound?"
 user: 12%, compounded annually
-you:  [daybook contract add --lender "me" --borrower "Anmol Jewellers" --rate 12
+you:  [daybook contract add --lender "me" --borrower "Blue Moon Jewellers" --rate 12
         --method compound --compounding annual --started 2026-06-08]
-      [daybook add --kind lend --who "Anmol Jewellers" --amount 5000000 --date 2026-06-08]
+      [daybook add --kind lend --who "Blue Moon Jewellers" --amount 5000000 --date 2026-06-08]
       "Recorded at 2026.beancount:8, on a new contract at 12%."
 ```
 
 **More than one contract — ask which**
 
 ```
-user: anmol paid 10000 interest
-you:  [daybook add --kind interest --who "Anmol Jewellers" --amount 10000 --no-commit]
-      -> error: "Anmol Jewellers has 2 contracts. Say which: --contract 2026-04-01-10p2
-         (Divya Agarwal, 10.2% from 2026-04-01) or --contract 2026-06-08-12
-         (Jasdeep Katariya, 12% from 2026-06-08)."
-      "Anmol has two loans on file — one from Divya at 10.2%, one from you at 12%.
+user: blue moon paid 10000 interest
+you:  [daybook add --kind interest --who "Blue Moon Jewellers" --amount 10000 --no-commit]
+      -> error: "Blue Moon Jewellers has 2 contracts. Say which: --contract 2026-04-01-10p2
+         (Casey Nolan, 10.2% from 2026-04-01) or --contract 2026-06-08-12
+         (Alex Rivera, 12% from 2026-06-08)."
+      "Blue Moon has two loans on file — one from Casey at 10.2%, one from you at 12%.
        Which one paid this interest?"
 ```
 
@@ -235,9 +249,9 @@ you:  [daybook balance "dad"]
 **A total across contracts**
 
 ```
-user: how much do I have out to Anmol in total, across both loans?
-you:  [daybook portfolio --borrower "Anmol Jewellers"]
-      "12,000,000 INR total across 2 contracts: 7,000,000 from Divya at 10.2%
+user: how much do I have out to Blue Moon in total, across both loans?
+you:  [daybook portfolio --borrower "Blue Moon Jewellers"]
+      "12,000,000 INR total across 2 contracts: 7,000,000 from Casey at 10.2%
        (accounts.beancount:80) and 5,000,000 from you at 12% (accounts.beancount:70)."
 ```
 
@@ -246,7 +260,7 @@ you:  [daybook portfolio --borrower "Anmol Jewellers"]
 ```
 user: whose birthdays are coming up this year?
 you:  [daybook upcoming --days 365]
-      "One: Harjit Singh on 14 March 2027, 187 days away. He turns 69."
+      "One: Robert Diaz on 14 March 2027, 187 days away. He turns 65."
 ```
 
 **Something the commands cannot answer**

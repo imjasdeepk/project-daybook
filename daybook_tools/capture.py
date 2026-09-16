@@ -23,8 +23,18 @@ from .contracts import Contract
 from .entities import Entity
 from .queries import find_duplicates
 from .store import (
-    CASH_ROOT, DaybookError, Paths, Snapshot, append_block, backdate_open, cite,
-    ensure_year_file, git_commit, load, opens,
+    CASH_ROOT,
+    DaybookError,
+    Paths,
+    Snapshot,
+    append_block,
+    backdate_open,
+    cite,
+    commit_field,
+    ensure_year_file,
+    git_commit,
+    load,
+    opens,
 )
 
 KINDS = {
@@ -115,12 +125,18 @@ def plan_entry(kind: str, *, contract: Contract | None = None, owner: Entity | N
     }
 
 
+def _quoted(text: str) -> str:
+    """Beancount string literals cannot contain `"`; a straight quote in
+    something the user typed becomes a curly one rather than breaking the
+    file. Used for every user-supplied string that lands inside quotes."""
+    return text.replace('"', "'")
+
+
 def render_entry(plan: dict) -> str:
-    payee = f' "{plan["payee"]}"' if plan["payee"] else ""
-    lines = [f'{plan["date"].isoformat()} *{payee} "{plan["narration"]}"']
+    payee = f' "{_quoted(plan["payee"])}"' if plan["payee"] else ""
+    lines = [f'{plan["date"].isoformat()} *{payee} "{_quoted(plan["narration"])}"']
     if plan["source"]:
-        escaped = plan["source"].replace('"', "'")
-        lines.append(f'  source: "{escaped}"')
+        lines.append(f'  source: "{_quoted(plan["source"])}"')
     width = max(len(a) for a, _ in plan["postings"]) + 2
     for account, value in plan["postings"]:
         lines.append(f"  {account.ljust(width)}{value:>14} {plan['currency']}")
@@ -180,8 +196,8 @@ def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
         raise
 
     citation = f"{target.name}:{line}"
-    sha = git_commit(p.root, f"capture: {plan['narration']}",
-                     [target, p.main, p.accounts]) if commit else None
+    result = git_commit(p.root, f"capture: {plan['narration']}",
+                        [target, p.main, p.accounts]) if commit else None
     return {
         "recorded": block,
         "citation": citation,
@@ -190,7 +206,7 @@ def commit_entry(p: Paths, plan: dict, *, commit: bool = True) -> dict:
         "amount": f"{plan['amount']} {plan['currency']}",
         "kind": plan["kind"],
         "contract": plan.get("contract", ""),
-        "commit": sha,
+        "commit": commit_field(result),
     }
 
 

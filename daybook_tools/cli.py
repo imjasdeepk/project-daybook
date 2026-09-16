@@ -6,19 +6,39 @@ import json
 import re
 import sys
 from datetime import date, datetime
+from importlib import metadata as _metadata
 from pathlib import Path
 
 from beancount import loader
 
+from . import __version__ as _fallback_version
 from . import capture, dates, events, interest, notes, queries
 from .contracts import (
-    Contract, add_contract, build_contract, load_contracts, set_terms,
+    Contract,
+    add_contract,
+    build_contract,
+    load_contracts,
+    set_terms,
 )
 from .entities import (
-    Entity, add_alias, add_entity, load_entities, resolve, self_entity, set_book,
+    Entity,
+    add_alias,
+    add_entity,
+    load_entities,
+    resolve,
+    self_entity,
+    set_book,
 )
 from .store import (
-    LOCATION_FILENAME, DaybookError, Paths, cite, git_commit, git_sync, load, paths, slugify,
+    LOCATION_FILENAME,
+    DaybookError,
+    cite,
+    commit_field,
+    git_commit,
+    git_sync,
+    load,
+    paths,
+    slugify,
 )
 
 
@@ -198,16 +218,35 @@ include "accounts.beancount"
 '''
 
 
+# The folder holding this package -- a git checkout in the ordinary case, a
+# `uv tool install` shim's site-packages otherwise. Records created under it
+# would land in (or ride along with) the tool's own storage, and for a git
+# checkout, `git_repo_for`'s nearest-enclosing-repository walk would commit
+# them straight into the public repository. Refused, not silently allowed.
+_TOOL_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _refuse_inside_tool(target: Path, what: str) -> None:
+    resolved = target.resolve()
+    if resolved == _TOOL_ROOT or resolved.is_relative_to(_TOOL_ROOT):
+        raise DaybookError(
+            f"{resolved} is inside {_TOOL_ROOT}, where the daybook tool itself lives. "
+            f"Records are never kept there -- pick a folder outside it for your {what}, "
+            "for example ~/Documents/daybook."
+        )
+
+
 def cmd_init(args) -> dict:
     """Create a ledger. Name a folder and the records go straight into it."""
     called_from = Path.cwd()
     if args.folder:
         root = Path(args.folder).expanduser().resolve()
-        root.mkdir(parents=True, exist_ok=True)
         records = root
     else:
         root = called_from
         records = root / "ledger"
+    _refuse_inside_tool(records, "ledger")
+    root.mkdir(parents=True, exist_ok=True)
     records.mkdir(parents=True, exist_ok=True)
     main_file = records / "main.beancount"
     accounts_file = records / "accounts.beancount"
@@ -311,7 +350,7 @@ def cmd_entity_add(args) -> dict:
     )
     result = add_entity(p, entity, args.opened or date.today(), existing)
     load(p)
-    result["commit"] = git_commit(p.root, f"entity: add {entity.name}", [p.accounts])
+    result["commit"] = commit_field(git_commit(p.root, f"entity: add {entity.name}", [p.accounts]))
     return result
 
 
@@ -322,7 +361,7 @@ def cmd_entity_alias(args) -> dict:
     entity = _require_entity(entries, args.name, p.root)
     result = add_alias(p, entity, [a.strip() for a in args.add.split(",")], all_entities)
     load(p)
-    result["commit"] = git_commit(p.root, f"entity: alias {entity.name}", [p.accounts])
+    result["commit"] = commit_field(git_commit(p.root, f"entity: alias {entity.name}", [p.accounts]))
     return result
 
 
@@ -339,7 +378,7 @@ def cmd_entity_book(args) -> dict:
         raise DaybookError("Say --on or --off.")
     result = set_book(p, entity, args.book)
     load(p)
-    result["commit"] = git_commit(p.root, f"entity: book {entity.name} {args.book}", [p.accounts])
+    result["commit"] = commit_field(git_commit(p.root, f"entity: book {entity.name} {args.book}", [p.accounts]))
     return result
 
 
@@ -372,9 +411,9 @@ def cmd_contract_add(args) -> dict:
     )
     result = add_contract(p, contract, existing)
     load(p)
-    result["commit"] = git_commit(
+    result["commit"] = commit_field(git_commit(
         p.root, f"contract: add {lender.name} -> {borrower.name}", [p.accounts]
-    )
+    ))
     return result
 
 
@@ -431,8 +470,8 @@ def cmd_contract_terms(args) -> dict:
     updated = set_terms(p, found, rate=args.rate, method=args.method,
                         compounding=args.compounding, day_count=args.day_count)
     load(p)
-    updated["commit"] = git_commit(p.root, f"contract: terms for {found.contract_id}",
-                                   [p.accounts])
+    updated["commit"] = commit_field(git_commit(p.root, f"contract: terms for {found.contract_id}",
+                                                 [p.accounts]))
     return updated
 
 
@@ -686,7 +725,8 @@ def _resolve_people(names: list[str]) -> list[str]:
     if not names:
         return []
     try:
-        from .store import load, paths as ledger_paths
+        from .store import load
+        from .store import paths as ledger_paths
         entries, _ = load(ledger_paths())
         known = load_entities(entries, ledger_paths().root)
     except Exception:  # noqa: BLE001 - no ledger is the ordinary notes-only case
@@ -711,6 +751,7 @@ def _resolve_people(names: list[str]) -> list[str]:
 
 def cmd_note_init(args) -> dict:
     folder = Path(args.folder).expanduser().resolve() if args.folder else Path.cwd() / "notes"
+    _refuse_inside_tool(folder, "notes")
     result = notes.init(folder, args.period)
     called_from = Path.cwd()
     if args.remember and folder != called_from and folder.parent != called_from:
@@ -737,9 +778,10 @@ def cmd_note_add(args) -> dict:
     )
     result = notes.add_note(root, note, period=period)
     if not args.no_commit:
-        sha = git_commit(root, f"note: {note.title}", [root / f for f in result["files_touched"]])
-        if sha:
-            result["commit"] = sha
+        commit = commit_field(git_commit(root, f"note: {note.title}",
+                                         [root / f for f in result["files_touched"]]))
+        if commit is not None:
+            result["commit"] = commit
     return result
 
 
@@ -794,10 +836,10 @@ def cmd_note_amend(args) -> dict:
         raise DaybookError("An amendment needs a body: say what the correction is.")
     result = notes.amend(root, args.citation, body, period=period, at=_as_of(args.date))
     if not args.no_commit:
-        sha = git_commit(root, f"note: amends {args.citation}",
-                         [root / f for f in result["files_touched"]])
-        if sha:
-            result["commit"] = sha
+        commit = commit_field(git_commit(root, f"note: amends {args.citation}",
+                                         [root / f for f in result["files_touched"]]))
+        if commit is not None:
+            result["commit"] = commit
     return result
 
 
@@ -813,10 +855,19 @@ def cmd_note_doctor(args) -> dict:
 
 # --------------------------------------------------------------------------- main
 
+def _version() -> str:
+    """The installed package version, or the source checkout's fallback."""
+    try:
+        return _metadata.version("project-daybook")
+    except _metadata.PackageNotFoundError:
+        return _fallback_version
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="daybook",
         description="A daybook whose answers are retrieved or computed, never recalled.")
+    parser.add_argument("--version", action="version", version=f"daybook {_version()}")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1017,7 +1068,7 @@ def build_parser() -> argparse.ArgumentParser:
     ni.add_argument("--period", choices=["week", "month"], default="week",
                     help="one file per week (default) or per month")
     ni.add_argument("--no-remember", dest="remember", action="store_false",
-                    help="do not write a .notes-root pointer here")
+                    help="do not write a .daybook-notes-root pointer here")
     ni.set_defaults(func=cmd_note_init)
 
     na = nsub.add_parser("add", help="write something down")

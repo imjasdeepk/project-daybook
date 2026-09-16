@@ -38,9 +38,9 @@ The project is `daybook`; `ledger` is one of its two features. So `daybook balan
 command, root-pointer file and environment variable are spelled `daybook`. A blind
 find-and-replace over this repository would be wrong.
 
-`LEDGER_ROOT` and `.ledger-root` are read for ever alongside `DAYBOOK_ROOT` and
-`.daybook-root`: they name where somebody's real records live, and dropping them would
-orphan every install made before the rename.
+This has not been rolled out to anyone yet, so there is no `LEDGER_ROOT`/`.ledger-root`
+backward compatibility to preserve and none should be added back: `DAYBOOK_ROOT` and
+`.daybook-root` are the only root-pointer spellings.
 
 ## Layout
 
@@ -110,7 +110,7 @@ orphan every install made before the rename.
 - **Portability.** Use `pathlib`, never shell pipes or Unix-only tools. Tests must
   pass on Windows.
 - **Records never enter this repository.** They normally live outside it entirely,
-  found via a gitignored `.ledger-root` file or the `LEDGER_ROOT` variable.
+  found via a gitignored `.daybook-root` file or the `DAYBOOK_ROOT` variable.
   `store.git_repo_for` resolves commits to whichever repository actually contains the
   files, so entries land in the private one. Never add anything under `ledger/` to
   this repository, and never write example records there.
