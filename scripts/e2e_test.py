@@ -71,13 +71,30 @@ def require(condition: bool, desc: str, detail: str = "") -> None:
 
 class Home:
     """One isolated fake-HOME sandbox: its own git identity, its own
-    ~/.claude/skills, its own uv tool shims. Torn down on exit."""
+    ~/.claude/skills, its own uv tool shims. Torn down on exit.
+
+    Every subprocess this suite runs is given `self.env`, never the ambient
+    environment -- so nothing here can ever resolve to, read, write, or
+    delete the real ~/.daybook-root, ~/.claude/skills, ~/.gitconfig, or any
+    real diary or ledger. The assertion below is not decorative: it is what
+    stands between a bug in this suite and someone's actual data, so it
+    checks the real, unresolved-symlink home directory, not just string
+    equality against $HOME (which a mistake could still bypass on a machine
+    where /tmp is itself inside the home directory, as on some setups).
+    """
 
     def __init__(self, label: str):
         self.label = label
-        self.root = Path(tempfile.mkdtemp(prefix=f"daybook-e2e-{label}-"))
+        self.root = Path(tempfile.mkdtemp(prefix=f"daybook-e2e-{label}-")).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
+        real_home = Path.home().resolve()
+        if self.home == real_home or real_home in self.home.parents:
+            raise RuntimeError(
+                f"refusing to run: sandbox HOME {self.home} is inside the real "
+                f"home directory {real_home}. This must never happen -- aborting "
+                "before anything touches real data."
+            )
         self.env_extra = {
             "HOME": str(self.home),
             "USERPROFILE": str(self.home),
@@ -427,6 +444,73 @@ def full_pass() -> None:
         home.cleanup()
 
 
+def reinstall_preserves_data_pass() -> None:
+    """Running the installer a second time over an existing install -- an
+    update, or just running it again out of habit -- must never touch a
+    single byte of what is already recorded. This is the scenario the user
+    is most exposed by: real data, on a real machine, re-running the same
+    command they ran the first time."""
+    home = Home("reinstall")
+    try:
+        install_dir = home.root / "tool"
+        records_dir = home.root / "records"
+        step("First install, then real data (regression: reinstalling must not lose it)")
+        install(home, install_dir=install_dir, records_dir=records_dir,
+               keep="both", backup="synced", currencies="USD")
+
+        binary = resolved_binary(home)
+        if not binary.exists():
+            fail("the installed binary exists after the first install",
+                f"expected {binary}")
+            return
+        db = Daybook(binary, cwd=install_dir, env=home.env)
+
+        code, out = db("entity", "add", "--name", "Alex Rivera", "--aliases", "me",
+                       "--currency", "USD", "--book", "--self")
+        require(code == 0, "self entity created before reinstall", json.dumps(out))
+        code, out = db("entity", "add", "--name", "Sam Blake", "--aliases", "sam",
+                       "--currency", "USD")
+        require(code == 0, "counterparty created before reinstall", json.dumps(out))
+        code, out = db("add", "--kind", "lend", "--who", "sam", "--amount", "500",
+                       "--date", "2026-01-01", "--note", "must not be lost")
+        require(code == 0, "a real entry recorded before reinstall", json.dumps(out))
+        code, out = db("note", "add", "--title", "Before reinstall",
+                       "--body", "must survive a reinstall")
+        require(code == 0, "a real note recorded before reinstall", json.dumps(out))
+
+        before_files = {
+            p.relative_to(records_dir): p.read_bytes()
+            for p in records_dir.rglob("*") if p.is_file()
+        }
+        require(len(before_files) > 0, "there is real data on disk to protect")
+
+        step("Reinstalling over the same install and the same records")
+        install(home, install_dir=install_dir, records_dir=records_dir,
+               keep="both", backup="synced", currencies="USD")
+
+        after_files = {
+            p.relative_to(records_dir): p.read_bytes()
+            for p in records_dir.rglob("*") if p.is_file()
+        }
+        require(before_files == after_files,
+               "every record file is byte-for-byte identical after reinstalling",
+               f"changed or missing: {sorted(set(before_files) ^ set(after_files)) or [k for k in before_files if before_files[k] != after_files.get(k)]}")
+
+        binary = resolved_binary(home)
+        db = Daybook(binary, cwd=install_dir, env=home.env)
+        code, out = db("balance", "sam")
+        require(code == 0 and out.get("payable") == {"USD": "500"},
+               "the pre-reinstall balance still reads correctly", json.dumps(out))
+        code, out = db("note", "find", "survive")
+        require(code == 0 and out.get("matches") == 1,
+               "the pre-reinstall note is still found", json.dumps(out))
+        code, out = db("check")
+        require(code == 0 and out.get("status") == "valid",
+               "the ledger is still valid after reinstalling", json.dumps(out))
+    finally:
+        home.cleanup()
+
+
 def diary_only_pass() -> None:
     """The headline open-source case: no ledger question, no Beancount file
     ever created, notes still fully functional, uninstall still leaves
@@ -478,6 +562,7 @@ def diary_only_pass() -> None:
 def main() -> int:
     step(f"daybook end-to-end suite -- repo at {REPO_ROOT}")
     full_pass()
+    reinstall_preserves_data_pass()
     diary_only_pass()
 
     print()
