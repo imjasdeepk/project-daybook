@@ -188,13 +188,23 @@ def backdate_open(p: Paths, account: str, to: date) -> dict:
     `entity book` and `entity alias` rewrite a line in place. Nothing is lost
     -- the account simply existed earlier than we first wrote it down. Only
     ever moves the date backwards.
+
+    Cash accounts (`Assets:Cash:<owner>:<currency>`) never get an explicit
+    `open` line -- they rely entirely on the `auto_accounts` plugin, opened
+    at whichever date first used them. When a later capture session records
+    something *older* than that first use, there is no literal line here to
+    move back, only a date `auto_accounts` invented. Writing one now, at the
+    earlier date, replaces that invented date with the true one -- the same
+    "the account simply existed earlier" reasoning as the ordinary case,
+    just for an account nothing had written down at all yet.
     """
     text = p.accounts.read_text(encoding="utf-8")
     lines = text.splitlines()
     anchor = f"open {account}"
     index = next((i for i, line in enumerate(lines) if line.strip().endswith(anchor)), None)
     if index is None:
-        raise DaybookError(f"Could not find the `open` directive for {account}.")
+        append_block(p.accounts, f"{to.isoformat()} open {account}")
+        return {"account": account, "from": None, "to": to.isoformat(), "changed": True}
     was, _, rest = lines[index].partition(" ")
     if date.fromisoformat(was) <= to:
         return {"account": account, "changed": False}

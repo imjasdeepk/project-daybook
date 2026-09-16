@@ -673,6 +673,36 @@ def test_backfilling_moves_the_open_date_back(ledger_root, run, paths):
     assert [t.date for t in txns] == [date(2025, 7, 1)]
 
 
+def test_backdating_an_already_used_cash_account(ledger_root, run, paths):
+    """A cash account (`Assets:Cash:<owner>:<currency>`) never gets an
+    explicit `open` line of its own -- it relies entirely on the
+    `auto_accounts` plugin, opened at whichever date first used it. A second
+    capture session that records something *older* than that first use --
+    finding an old receipt later, say -- has no literal line to move back,
+    only a date the plugin invented. It must not be refused for that.
+    """
+    from daybook_tools.store import opens
+
+    run("entity", "add", "--name", "Me", "--aliases", "me", "--book", "--self",
+        "--currency", "USD")
+    run("entity", "add", "--name", "Nik", "--aliases", "nik", "--currency", "USD")
+    run("entity", "add", "--name", "Sam", "--aliases", "sam", "--currency", "USD")
+    run("contract", "add", "--lender", "me", "--borrower", "nik", "--rate", "0",
+        "--started", "2026-01-01")
+    run("contract", "add", "--lender", "me", "--borrower", "sam", "--rate", "0",
+        "--started", "2025-01-01")
+
+    # First use of Assets:Cash:Me:USD: auto-opened at 2026-01-01.
+    run("add", "--kind", "lend", "--who", "nik", "--amount", "100", "--date", "2026-01-01")
+    # A second, older entry through the *same* cash account: 2025-07-01 predates it.
+    run("add", "--kind", "lend", "--who", "sam", "--amount", "50", "--date", "2025-07-01")
+
+    run("check")
+    entries, _ = load(paths)
+    cash_open = next(o for o in opens(entries) if o.account == "Assets:Cash:Me:USD")
+    assert cash_open.date == date(2025, 7, 1), "the cash account's open date moved back too"
+
+
 def test_backdating_only_ever_moves_a_date_earlier(ledger_root, run, paths):
     from daybook_tools.store import backdate_open
 
