@@ -76,11 +76,14 @@ class Home:
     Every subprocess this suite runs is given `self.env`, never the ambient
     environment -- so nothing here can ever resolve to, read, write, or
     delete the real ~/.daybook-root, ~/.claude/skills, ~/.gitconfig, or any
-    real diary or ledger. The assertion below is not decorative: it is what
-    stands between a bug in this suite and someone's actual data, so it
-    checks the real, unresolved-symlink home directory, not just string
-    equality against $HOME (which a mistake could still bypass on a machine
-    where /tmp is itself inside the home directory, as on some setups).
+    real diary or ledger. The check below guards the one way that could
+    still go wrong: the sandbox actually *being* the real home directory,
+    which would mean directory creation silently failed to produce a fresh
+    path. It does not require the sandbox to sit *outside* the real home
+    tree -- on Windows the system temp directory is legitimately inside
+    %USERPROFILE% (unlike /tmp on macOS/Linux), so a fresh, previously
+    nonexistent subdirectory under there is exactly as safe as one under
+    /tmp; only reusing the real home path itself would not be.
     """
 
     def __init__(self, label: str):
@@ -89,11 +92,11 @@ class Home:
         self.home = self.root / "home"
         self.home.mkdir()
         real_home = Path.home().resolve()
-        if self.home == real_home or real_home in self.home.parents:
+        if self.home == real_home:
             raise RuntimeError(
-                f"refusing to run: sandbox HOME {self.home} is inside the real "
-                f"home directory {real_home}. This must never happen -- aborting "
-                "before anything touches real data."
+                f"refusing to run: sandbox HOME {self.home} is the real home "
+                "directory. This must never happen -- aborting before anything "
+                "touches real data."
             )
         self.env_extra = {
             "HOME": str(self.home),
